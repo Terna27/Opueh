@@ -1,0 +1,18 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Compiled binaries
+bin/
+dist/
+
+# Test and coverage artifacts
+*.out
+coverage.*
+
+# Editor and OS noise
+.idea/
+.vscode/
+*.swp
+.DS_Store
