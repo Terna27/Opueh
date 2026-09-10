@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -124,4 +125,117 @@ func (r *UserRepository) PurgeForTests(ctx context.Context, id uuid.UUID) error 
 		return fmt.Errorf("purge user: %w", err)
 	}
 	return nil
+}
+
+// ProfilePatch is a partial user_profiles update. A column is written only
+// when its flag is set; the mapping from flags to column names happens
+// exclusively inside UpdateProfile against this hardcoded struct — never
+// from caller input. Bio is a pointer so an update can also CLEAR the bio
+// (nil = SQL NULL).
+type ProfilePatch struct {
+	UpdateDisplayName bool
+	DisplayName       string
+	UpdateBio         bool
+	Bio               *string
+}
+
+// profileColumns joins the account fields the profile domain needs with the
+// profile row. The INNER JOIN relies on the registration invariant: every
+// user is created together with its profile row in one transaction, so a
+// missing profile row surfaces as ErrNotFound rather than requiring
+// fallback logic anywhere upstream. p.created_at is omitted: it is the same
+// instant as u.created_at (one transaction), so CreatedAt means account
+// creation.
+const profileColumns = `
+	u.id, u.username, u.email, u.role, u.status, u.email_verified_at, u.created_at,
+	p.display_name, p.bio, p.updated_at`
+
+func scanProfile(row pgx.Row) (*models.Profile, error) {
+	var p models.Profile
+	err := row.Scan(
+		&p.UserID, &p.Username, &p.Email, &p.Role, &p.Status,
+		&p.EmailVerifiedAt, &p.CreatedAt,
+		&p.DisplayName, &p.Bio, &p.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+const profileFromUser = `
+	FROM users u
+	JOIN user_profiles p ON p.user_id = u.id`
+
+// GetProfileByID loads a user's profile for the owner's eyes. Soft-deleted
+// users have no profile to load.
+func (r *UserRepository) GetProfileByID(ctx context.Context, userID uuid.UUID) (*models.Profile, error) {
+	p, err := scanProfile(r.pool.QueryRow(ctx, `
+		SELECT `+profileColumns+profileFromUser+`
+		WHERE u.id = $1 AND u.deleted_at IS NULL`,
+		userID,
+	))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: profile for user %s", ErrNotFound, userID)
+		}
+		return nil, fmt.Errorf("get profile by id: %w", err)
+	}
+	return p, nil
+}
+
+// GetPublicProfileByUsername loads a profile for public display. citext
+// makes the username match case-insensitive. Deleted, suspended and banned
+// accounts are filtered in SQL, so they are indistinguishable from a
+// username that never existed: one ErrNotFound, no existence oracle.
+func (r *UserRepository) GetPublicProfileByUsername(ctx context.Context, username string) (*models.Profile, error) {
+	p, err := scanProfile(r.pool.QueryRow(ctx, `
+		SELECT `+profileColumns+profileFromUser+`
+		WHERE u.username = $1 AND u.deleted_at IS NULL AND u.status = 'ACTIVE'`,
+		username,
+	))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: user %q", ErrNotFound, username)
+		}
+		return nil, fmt.Errorf("get public profile: %w", err)
+	}
+	return p, nil
+}
+
+// UpdateProfile applies a partial profile update atomically — every supplied
+// column changes in one statement or nothing does — and returns the updated
+// profile. Only the columns whose flags are set are written; column names
+// are hardcoded here, values are always bind parameters.
+func (r *UserRepository) UpdateProfile(ctx context.Context, userID uuid.UUID, patch ProfilePatch) (*models.Profile, error) {
+	sets := make([]string, 0, 2)
+	args := make([]any, 0, 3)
+	args = append(args, userID)
+
+	if patch.UpdateDisplayName {
+		args = append(args, patch.DisplayName)
+		sets = append(sets, fmt.Sprintf("display_name = $%d", len(args)))
+	}
+	if patch.UpdateBio {
+		args = append(args, patch.Bio)
+		sets = append(sets, fmt.Sprintf("bio = $%d", len(args)))
+	}
+
+	if len(sets) > 0 {
+		tag, err := r.pool.Exec(ctx,
+			`UPDATE user_profiles SET `+strings.Join(sets, ", ")+` WHERE user_id = $1`,
+			args...,
+		)
+		if err != nil {
+			return nil, translatePgError(fmt.Errorf("update profile: %w", err))
+		}
+		if tag.RowsAffected() == 0 {
+			// The registration invariant guarantees a profile row per user;
+			// reaching this means the user does not exist (or the invariant
+			// broke). Either way the caller sees not-found.
+			return nil, fmt.Errorf("%w: profile for user %s", ErrNotFound, userID)
+		}
+	}
+
+	return r.GetProfileByID(ctx, userID)
 }

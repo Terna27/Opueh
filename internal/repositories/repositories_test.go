@@ -179,7 +179,7 @@ func TestSessionRepository_TokenLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate token: %v", err)
 	}
-	firstHash := auth.HashRefreshToken(firstToken)
+	firstHash := auth.HashToken(firstToken)
 	if err := sessions.CreateRefreshToken(ctx, session.ID, firstHash, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("create refresh token: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestSessionRepository_TokenLifecycle(t *testing.T) {
 
 	// Rotation: old token consumed, new token usable.
 	secondToken, _ := auth.GenerateRefreshToken()
-	secondHash := auth.HashRefreshToken(secondToken)
+	secondHash := auth.HashToken(secondToken)
 	if err := sessions.RotateRefreshToken(ctx, state.TokenID, secondHash, time.Now().Add(time.Hour), time.Now()); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestSessionRepository_TokenLifecycle(t *testing.T) {
 
 	// Rotating the SAME old token again must fail atomically.
 	thirdToken, _ := auth.GenerateRefreshToken()
-	if err := sessions.RotateRefreshToken(ctx, state.TokenID, auth.HashRefreshToken(thirdToken), time.Now().Add(time.Hour), time.Now()); !errors.Is(err, ErrTokenAlreadyUsed) {
+	if err := sessions.RotateRefreshToken(ctx, state.TokenID, auth.HashToken(thirdToken), time.Now().Add(time.Hour), time.Now()); !errors.Is(err, ErrTokenAlreadyUsed) {
 		t.Errorf("double rotation: got %v, want ErrTokenAlreadyUsed", err)
 	}
 
@@ -267,7 +267,7 @@ func TestSessionRepository_TokenLifecycle(t *testing.T) {
 	}
 
 	// Unknown lookups surface ErrNotFound.
-	if _, err := sessions.GetRefreshTokenState(ctx, auth.HashRefreshToken("rt_does-not-exist")); !errors.Is(err, ErrNotFound) {
+	if _, err := sessions.GetRefreshTokenState(ctx, auth.HashToken("rt_does-not-exist")); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown token hash: got %v, want ErrNotFound", err)
 	}
 	if _, err := sessions.GetSessionAuthState(ctx, uuid.New()); !errors.Is(err, ErrNotFound) {

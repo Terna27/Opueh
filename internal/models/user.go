@@ -42,3 +42,37 @@ type Session struct {
 	ExpiresAt time.Time
 	RevokedAt *time.Time
 }
+
+// SessionInfo is the user-facing view of a session for the
+// session-management endpoints: when it was created, when it was last used,
+// and the client metadata that lets a user recognize the device. It never
+// carries token material — refresh tokens exist only as hashes in storage.
+type SessionInfo struct {
+	ID         uuid.UUID
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+	ExpiresAt  time.Time
+	UserAgent  *string
+	IPAddress  *string
+}
+
+// Profile is a user_profiles row joined with the account fields the profile
+// domain needs. Email, Role, Status and EmailVerifiedAt are owner-only:
+// public profile representations are built by explicit whitelisting in the
+// handlers and must never include them (or anything else on this struct
+// that is not copied over deliberately).
+//
+// The struct is designed so an avatar can be added later (Milestone 8's
+// media foundation) as another joined field without reshaping the domain.
+type Profile struct {
+	UserID          uuid.UUID
+	Username        string
+	DisplayName     string
+	Bio             *string
+	Email           string // owner-only; never in public representations
+	Role            string // owner-only
+	Status          string // owner-only
+	EmailVerifiedAt *time.Time
+	CreatedAt       time.Time // account creation (users.created_at)
+	UpdatedAt       time.Time // last profile edit (user_profiles.updated_at)
+}

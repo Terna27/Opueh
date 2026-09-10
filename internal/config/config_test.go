@@ -124,7 +124,7 @@ func TestLoad_Defaults(t *testing.T) {
 func TestLoad_Overrides(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://u:p@dbhost:5433/prod")
 	t.Setenv("JWT_SECRET", testJWTSecret)
-	t.Setenv("ENV", "production")
+	t.Setenv("ENV", "staging") // production refuses the dev email sender
 	t.Setenv("HTTP_ADDR", ":9000")
 	t.Setenv("DB_MAX_CONNS", "25")
 	t.Setenv("ALLOWED_ORIGINS", "https://app.example.com, https://web.example.com")
@@ -134,8 +134,8 @@ func TestLoad_Overrides(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !cfg.IsProduction() {
-		t.Error("IsProduction should be true for ENV=production")
+	if cfg.IsProduction() {
+		t.Error("IsProduction should be false for ENV=staging")
 	}
 	if cfg.HTTPAddr != ":9000" {
 		t.Errorf("addr = %q, want :9000", cfg.HTTPAddr)
@@ -150,6 +150,196 @@ func TestLoad_Overrides(t *testing.T) {
 	for i := range want {
 		if cfg.AllowedOrigins[i] != want[i] {
 			t.Errorf("origins[%d] = %q, want %q", i, cfg.AllowedOrigins[i], want[i])
+		}
+	}
+}
+
+func TestLoad_ProductionRefusesDevEmailSender(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@dbhost:5433/prod")
+	t.Setenv("JWT_SECRET", testJWTSecret)
+	t.Setenv("ENV", "production")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected production to refuse the dev email sender")
+	}
+	if !strings.Contains(err.Error(), "EMAIL_PROVIDER") {
+		t.Errorf("error should mention EMAIL_PROVIDER, got: %v", err)
+	}
+}
+
+func TestLoad_StagingAllowsDevEmailSender(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@dbhost:5433/prod")
+	t.Setenv("JWT_SECRET", testJWTSecret)
+	t.Setenv("ENV", "staging")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("staging should accept the dev email sender: %v", err)
+	}
+	if cfg.EmailProvider != "dev" {
+		t.Errorf("email provider = %q, want dev", cfg.EmailProvider)
+	}
+}
+
+func TestLoad_InvalidAppURL(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/db")
+	t.Setenv("JWT_SECRET", testJWTSecret)
+	t.Setenv("APP_URL", "not-a-url")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected an error for a non-http APP_URL")
+	}
+	if !strings.Contains(err.Error(), "APP_URL") {
+		t.Errorf("error should mention APP_URL, got: %v", err)
+	}
+}
+
+func TestLoad_AccountDefaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/db")
+	t.Setenv("JWT_SECRET", testJWTSecret)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.AppURL != "http://localhost:3000" {
+		t.Errorf("default APP_URL = %q", cfg.AppURL)
+	}
+	if cfg.EmailProvider != "dev" {
+		t.Errorf("default EMAIL_PROVIDER = %q, want dev", cfg.EmailProvider)
+	}
+	if cfg.EmailVerificationTokenTTL != 24*time.Hour {
+		t.Errorf("default verification TTL = %v, want 24h", cfg.EmailVerificationTokenTTL)
+	}
+	if cfg.PasswordResetTokenTTL != time.Hour {
+		t.Errorf("default reset TTL = %v, want 1h", cfg.PasswordResetTokenTTL)
+	}
+	if cfg.EmailResendCooldown != time.Minute || cfg.PasswordResetCooldown != time.Minute {
+		t.Errorf("default cooldowns = %v/%v, want 1m/1m", cfg.EmailResendCooldown, cfg.PasswordResetCooldown)
+	}
+	if cfg.PasswordForgotIPLimit != 10 || cfg.PasswordForgotIPRateWindow != time.Hour {
+		t.Errorf("default IP limit = %d per %v, want 10 per 1h", cfg.PasswordForgotIPLimit, cfg.PasswordForgotIPRateWindow)
+	}
+
+	if cfg.AuthBodyLimitBytes != 4096 {
+		t.Errorf("default auth body limit = %d, want 4096", cfg.AuthBodyLimitBytes)
+	}
+	if cfg.LoginRateLimit != 10 || cfg.LoginRateWindow != time.Minute {
+		t.Errorf("default login rate = %d per %v, want 10 per 1m", cfg.LoginRateLimit, cfg.LoginRateWindow)
+	}
+	if cfg.LoginMaxFailures != 5 || cfg.LoginFailureWindow != 15*time.Minute || cfg.LoginLockoutDuration != 15*time.Minute {
+		t.Errorf("default lockout = %d failures per %v, locked %v; want 5 per 15m, locked 15m",
+			cfg.LoginMaxFailures, cfg.LoginFailureWindow, cfg.LoginLockoutDuration)
+	}
+}
+
+func TestLoad_AuthBodyLimitAboveGlobalRejected(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/db")
+	t.Setenv("JWT_SECRET", testJWTSecret)
+	t.Setenv("AUTH_BODY_LIMIT_BYTES", "999999999")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected an error when AUTH_BODY_LIMIT_BYTES exceeds the global limit")
+	}
+	if !strings.Contains(err.Error(), "AUTH_BODY_LIMIT_BYTES") {
+		t.Errorf("error should mention AUTH_BODY_LIMIT_BYTES, got: %v", err)
+	}
+}
+
+func TestLoad_InvalidLoginProtectionSettings(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/db")
+	t.Setenv("JWT_SECRET", testJWTSecret)
+	t.Setenv("LOGIN_RATE_LIMIT", "0")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected an error for LOGIN_RATE_LIMIT < 1")
+	}
+	if !strings.Contains(err.Error(), "LOGIN_RATE_LIMIT") {
+		t.Errorf("error should mention LOGIN_RATE_LIMIT, got: %v", err)
+	}
+}
+
+// productionBase is a fully valid production configuration; the individual
+// refusal tests break exactly one setting on top of it.
+func productionBase(t *testing.T) {
+	t.Helper()
+	t.Setenv("DATABASE_URL", "postgres://u:p@dbhost:5433/prod")
+	t.Setenv("JWT_SECRET", testJWTSecret)
+	t.Setenv("ENV", "production")
+	t.Setenv("APP_URL", "https://app.example.com")
+	t.Setenv("EMAIL_PROVIDER", "ses") // a real (future) provider — not the dev logger
+}
+
+func TestLoad_ProductionRefusesLongAccessTokenTTL(t *testing.T) {
+	productionBase(t)
+	t.Setenv("ACCESS_TOKEN_TTL", "24h")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected production to refuse ACCESS_TOKEN_TTL > 1h")
+	}
+	if !strings.Contains(err.Error(), "ACCESS_TOKEN_TTL") {
+		t.Errorf("error should mention ACCESS_TOKEN_TTL, got: %v", err)
+	}
+}
+
+func TestLoad_ProductionRefusesLongRefreshTokenTTL(t *testing.T) {
+	productionBase(t)
+	t.Setenv("REFRESH_TOKEN_TTL", "8760h")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected production to refuse REFRESH_TOKEN_TTL > 90 days")
+	}
+	if !strings.Contains(err.Error(), "REFRESH_TOKEN_TTL") {
+		t.Errorf("error should mention REFRESH_TOKEN_TTL, got: %v", err)
+	}
+}
+
+func TestLoad_ProductionRequiresHTTPSAppURL(t *testing.T) {
+	productionBase(t)
+	t.Setenv("APP_URL", "http://app.example.com")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected production to refuse a non-https APP_URL")
+	}
+	if !strings.Contains(err.Error(), "APP_URL") {
+		t.Errorf("error should mention APP_URL, got: %v", err)
+	}
+}
+
+func TestLoad_ProductionRefusesPlaceholderJWTSecret(t *testing.T) {
+	productionBase(t)
+	t.Setenv("JWT_SECRET", "replace-me-with-a-random-48-byte-base64-string")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected production to refuse the .env.example placeholder JWT_SECRET")
+	}
+	if !strings.Contains(err.Error(), "JWT_SECRET") {
+		t.Errorf("error should mention JWT_SECRET, got: %v", err)
+	}
+}
+
+func TestLoad_ProductionAcceptsSecureSettings(t *testing.T) {
+	productionBase(t) // only the email provider is unimplemented and refused
+
+	// EMAIL_PROVIDER=ses is not wired yet, so production still refuses to
+	// start today — but NOT for any of the M5 security rules: the error
+	// must not mention TTLs, APP_URL or JWT_SECRET.
+	_, err := Load()
+	if err == nil {
+		return // a real provider got wired; nothing to assert
+	}
+	for _, setting := range []string{"ACCESS_TOKEN_TTL", "REFRESH_TOKEN_TTL", "APP_URL must use https", "JWT_SECRET is still"} {
+		if strings.Contains(err.Error(), setting) {
+			t.Errorf("secure production config rejected over %q: %v", setting, err)
 		}
 	}
 }

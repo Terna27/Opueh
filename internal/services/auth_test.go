@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
 	"github.com/Tena-byte/opueh/internal/apperr"
 	"github.com/Tena-byte/opueh/internal/auth"
 	"github.com/Tena-byte/opueh/internal/models"
+	"github.com/Tena-byte/opueh/internal/ratelimit"
 	"github.com/Tena-byte/opueh/internal/repositories"
 )
 
@@ -71,9 +74,13 @@ func (f *fakeUserStore) GetByID(ctx context.Context, id uuid.UUID) (*models.User
 }
 
 type fakeSession struct {
-	userID    uuid.UUID
-	revokedAt *time.Time
-	expiresAt time.Time
+	userID     uuid.UUID
+	createdAt  time.Time
+	userAgent  string
+	ip         string
+	lastUsedAt *time.Time
+	revokedAt  *time.Time
+	expiresAt  time.Time
 }
 
 type fakeToken struct {
@@ -105,10 +112,17 @@ func newFakeSessionStore(users *fakeUserStore) *fakeSessionStore {
 }
 
 func (f *fakeSessionStore) CreateSession(ctx context.Context, userID uuid.UUID, userAgent, ip string, expiresAt time.Time) (*models.Session, error) {
-	s := &fakeSession{userID: userID, expiresAt: expiresAt}
+	now := time.Now().UTC()
+	s := &fakeSession{
+		userID:    userID,
+		createdAt: now,
+		userAgent: userAgent,
+		ip:        ip,
+		expiresAt: expiresAt,
+	}
 	id := uuid.New()
 	f.sessions[id] = s
-	return &models.Session{ID: id, UserID: userID, ExpiresAt: expiresAt}, nil
+	return &models.Session{ID: id, UserID: userID, CreatedAt: now, ExpiresAt: expiresAt}, nil
 }
 
 func (f *fakeSessionStore) CreateRefreshToken(ctx context.Context, sessionID uuid.UUID, tokenHash string, expiresAt time.Time) error {
@@ -181,6 +195,76 @@ func (f *fakeSessionStore) RevokeSession(ctx context.Context, sessionID uuid.UUI
 	return nil
 }
 
+// ListUserSessions mimics the repository semantics: only active (unrevoked,
+// unexpired) sessions, newest first.
+func (f *fakeSessionStore) ListUserSessions(ctx context.Context, userID uuid.UUID) ([]models.SessionInfo, error) {
+	now := time.Now().UTC()
+	var out []models.SessionInfo
+	for id, sess := range f.sessions {
+		if sess.userID != userID || sess.revokedAt != nil || !sess.expiresAt.After(now) {
+			continue
+		}
+		var ua, ip *string
+		if sess.userAgent != "" {
+			ua = &sess.userAgent
+		}
+		if sess.ip != "" {
+			ip = &sess.ip
+		}
+		out = append(out, models.SessionInfo{
+			ID:         id,
+			CreatedAt:  sess.createdAt,
+			LastUsedAt: sess.lastUsedAt,
+			ExpiresAt:  sess.expiresAt,
+			UserAgent:  ua,
+			IPAddress:  ip,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+// RevokeUserSession mimics the ownership-scoped repository revocation:
+// unknown or foreign session IDs are indistinguishable (ErrNotFound);
+// already-revoked is a no-op.
+func (f *fakeSessionStore) RevokeUserSession(ctx context.Context, userID, sessionID uuid.UUID) error {
+	sess, ok := f.sessions[sessionID]
+	if !ok || sess.userID != userID {
+		return fmt.Errorf("%w: session %s for user %s", repositories.ErrNotFound, sessionID, userID)
+	}
+	if sess.revokedAt != nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	sess.revokedAt = &now
+	for _, tok := range f.tokens {
+		if tok.sessionID == sessionID && tok.revokedAt == nil {
+			tok.revokedAt = &now
+		}
+	}
+	return nil
+}
+
+// RevokeOtherSessions mimics revoking every active session except the kept
+// one, including their refresh tokens.
+func (f *fakeSessionStore) RevokeOtherSessions(ctx context.Context, userID, keepSessionID uuid.UUID) error {
+	now := time.Now().UTC()
+	for id, sess := range f.sessions {
+		if sess.userID != userID || id == keepSessionID || sess.revokedAt != nil {
+			continue
+		}
+		sess.revokedAt = &now
+		for _, tok := range f.tokens {
+			if tok.sessionID == id && tok.revokedAt == nil {
+				tok.revokedAt = &now
+			}
+		}
+	}
+	return nil
+}
+
 func (f *fakeSessionStore) GetSessionAuthState(ctx context.Context, sessionID uuid.UUID) (*repositories.SessionAuthState, error) {
 	sess, ok := f.sessions[sessionID]
 	if !ok {
@@ -217,6 +301,13 @@ type testHarness struct {
 
 func newTestHarness(t *testing.T) *testHarness {
 	t.Helper()
+	return newHarnessWithProtection(t, NoopLoginProtection())
+}
+
+// newHarnessWithProtection builds a harness whose login protections are
+// supplied by the test — real limiters/tracker for brute-force tests.
+func newHarnessWithProtection(t *testing.T, protection LoginProtection) *testHarness {
+	t.Helper()
 	users := &fakeUserStore{}
 	sessions := newFakeSessionStore(users)
 	svc := NewAuthService(
@@ -224,6 +315,7 @@ func newTestHarness(t *testing.T) *testHarness {
 		sessions,
 		auth.NewJWTManager(testJWTSecret, testJWTIssuer, 15*time.Minute),
 		AuthConfig{AccessTokenTTL: 15 * time.Minute, RefreshTokenTTL: time.Hour, SessionTTL: 24 * time.Hour},
+		protection,
 	)
 	return &testHarness{users: users, sessions: sessions, svc: svc}
 }
@@ -508,7 +600,7 @@ func TestRefresh_ExpiredTokenDoesNotRevokeSession(t *testing.T) {
 	initial := h.register(t, "jane@example.com", "jane_doe")
 
 	// Expire the stored token behind the service's back.
-	hash := auth.HashRefreshToken(initial.RefreshToken)
+	hash := auth.HashToken(initial.RefreshToken)
 	h.sessions.tokens[hash].expiresAt = time.Now().Add(-time.Minute)
 
 	_, err := h.svc.Refresh(context.Background(), initial.RefreshToken, ClientMeta{})
@@ -592,6 +684,7 @@ func TestAuthenticate_ExpiredJWT(t *testing.T) {
 		users, sessions,
 		auth.NewJWTManager(testJWTSecret, testJWTIssuer, -time.Minute), // everything already expired
 		AuthConfig{AccessTokenTTL: time.Minute, RefreshTokenTTL: time.Hour, SessionTTL: 24 * time.Hour},
+		NoopLoginProtection(),
 	)
 
 	res, err := svc.Register(context.Background(), RegisterInput{
@@ -619,4 +712,404 @@ func TestGetUser_NotFound(t *testing.T) {
 
 	_, err := h.svc.GetUser(context.Background(), uuid.New())
 	assertAppErr(t, err, 404, "USER_NOT_FOUND")
+}
+
+// ---------------------------------------------------------------------------
+// Login brute-force protection (M5)
+// ---------------------------------------------------------------------------
+
+func TestLogin_IPRateLimited(t *testing.T) {
+	h := newHarnessWithProtection(t, LoginProtection{
+		IPLimiter:         ratelimit.NewMemoryLimiter(2, time.Minute),
+		IdentifierLimiter: ratelimit.NoopLimiter{},
+		Guard:             noopLoginGuard{},
+	})
+	h.register(t, "jane@example.com", "jane_doe")
+
+	bad := LoginInput{Identifier: "jane@example.com", Password: "wrong-password"}
+	ctx := context.Background()
+
+	// Two attempts from one IP are allowed (and fail on credentials)...
+	_, err := h.svc.Login(ctx, bad, ClientMeta{IP: "203.0.113.7"})
+	assertAppErr(t, err, 401, "INVALID_CREDENTIALS")
+	_, err = h.svc.Login(ctx, bad, ClientMeta{IP: "203.0.113.7"})
+	assertAppErr(t, err, 401, "INVALID_CREDENTIALS")
+
+	// ...the third is rate limited even with CORRECT credentials.
+	_, err = h.svc.Login(ctx, LoginInput{Identifier: "jane@example.com", Password: "password123"}, ClientMeta{IP: "203.0.113.7"})
+	assertAppErr(t, err, 429, "RATE_LIMITED")
+
+	// A different source IP is unaffected.
+	if _, err := h.svc.Login(ctx, LoginInput{Identifier: "jane@example.com", Password: "password123"}, ClientMeta{IP: "198.51.100.9"}); err != nil {
+		t.Errorf("different IP should not be affected by another IP's limit: %v", err)
+	}
+}
+
+func TestLogin_IdentifierRateLimited(t *testing.T) {
+	h := newHarnessWithProtection(t, LoginProtection{
+		IPLimiter:         ratelimit.NoopLimiter{},
+		IdentifierLimiter: ratelimit.NewMemoryLimiter(2, time.Minute),
+		Guard:             noopLoginGuard{},
+	})
+	h.register(t, "jane@example.com", "jane_doe")
+
+	bad := LoginInput{Identifier: "JANE@example.com", Password: "wrong-password"} // normalized to the same key
+	ctx := context.Background()
+
+	_, err := h.svc.Login(ctx, bad, ClientMeta{IP: "203.0.113.1"})
+	assertAppErr(t, err, 401, "INVALID_CREDENTIALS")
+	_, err = h.svc.Login(ctx, bad, ClientMeta{IP: "203.0.113.2"}) // different IP, same account
+	assertAppErr(t, err, 401, "INVALID_CREDENTIALS")
+
+	// The account itself is now throttled even from a fresh IP.
+	_, err = h.svc.Login(ctx, bad, ClientMeta{IP: "203.0.113.3"})
+	assertAppErr(t, err, 429, "RATE_LIMITED")
+
+	// Other accounts are unaffected.
+	h.register(t, "john@example.com", "john_doe")
+	if _, err := h.svc.Login(ctx, LoginInput{Identifier: "john@example.com", Password: "password123"}, ClientMeta{IP: "203.0.113.3"}); err != nil {
+		t.Errorf("unrelated account throttled: %v", err)
+	}
+}
+
+func TestLogin_TemporaryLockoutAfterRepeatedFailures(t *testing.T) {
+	clock := &loginTestClock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}
+	tracker := ratelimit.NewFailureTracker(3, 15*time.Minute, 15*time.Minute)
+	tracker.Clock = clock.Now
+
+	h := newHarnessWithProtection(t, LoginProtection{
+		IPLimiter:         ratelimit.NoopLimiter{},
+		IdentifierLimiter: ratelimit.NoopLimiter{},
+		Guard:             tracker,
+	})
+	h.register(t, "jane@example.com", "jane_doe")
+
+	bad := LoginInput{Identifier: "jane@example.com", Password: "wrong-password"}
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		_, err := h.svc.Login(ctx, bad, ClientMeta{IP: "203.0.113.7"})
+		assertAppErr(t, err, 401, "INVALID_CREDENTIALS")
+	}
+
+	// Locked — even the CORRECT password is refused, with the generic
+	// RATE_LIMITED error.
+	_, err := h.svc.Login(ctx, LoginInput{Identifier: "jane@example.com", Password: "password123"}, ClientMeta{IP: "203.0.113.7"})
+	assertAppErr(t, err, 429, "RATE_LIMITED")
+
+	// The lockout is temporary: after it elapses, the correct password
+	// works again (never a permanent disable).
+	clock.Advance(16 * time.Minute)
+	res, err := h.svc.Login(ctx, LoginInput{Identifier: "jane@example.com", Password: "password123"}, ClientMeta{IP: "203.0.113.7"})
+	if err != nil {
+		t.Fatalf("login after lockout expiry: %v", err)
+	}
+	if res.User.Username != "jane_doe" {
+		t.Errorf("logged in wrong user: %+v", res.User)
+	}
+}
+
+func TestLogin_SuccessResetsFailureCounters(t *testing.T) {
+	h := newHarnessWithProtection(t, LoginProtection{
+		IPLimiter:         ratelimit.NoopLimiter{},
+		IdentifierLimiter: ratelimit.NoopLimiter{},
+		Guard:             ratelimit.NewFailureTracker(3, time.Hour, time.Hour),
+	})
+	h.register(t, "jane@example.com", "jane_doe")
+
+	ctx := context.Background()
+	bad := LoginInput{Identifier: "jane@example.com", Password: "wrong-password"}
+	good := LoginInput{Identifier: "jane@example.com", Password: "password123"}
+
+	// Two failures, then a success that resets the counter...
+	for i := 0; i < 2; i++ {
+		_, err := h.svc.Login(ctx, bad, ClientMeta{})
+		assertAppErr(t, err, 401, "INVALID_CREDENTIALS")
+	}
+	if _, err := h.svc.Login(ctx, good, ClientMeta{}); err != nil {
+		t.Fatalf("successful login after failures: %v", err)
+	}
+
+	// ...so two MORE failures (4 total without the reset) still don't lock,
+	// and the next correct login succeeds.
+	for i := 0; i < 2; i++ {
+		_, err := h.svc.Login(ctx, bad, ClientMeta{})
+		assertAppErr(t, err, 401, "INVALID_CREDENTIALS")
+	}
+	if _, err := h.svc.Login(ctx, good, ClientMeta{}); err != nil {
+		t.Errorf("pre-reset failures counted against the user after success: %v", err)
+	}
+}
+
+func TestLogin_UnknownIdentifierFailuresCountTowardLockout(t *testing.T) {
+	h := newHarnessWithProtection(t, LoginProtection{
+		IPLimiter:         ratelimit.NoopLimiter{},
+		IdentifierLimiter: ratelimit.NoopLimiter{},
+		Guard:             ratelimit.NewFailureTracker(2, time.Hour, time.Hour),
+	})
+	ctx := context.Background()
+
+	// Failures against a NONEXISTENT account must be recorded exactly like
+	// wrong passwords — otherwise the lockout state itself would leak which
+	// identifiers exist.
+	ghost := LoginInput{Identifier: "ghost@example.com", Password: "whatever-1"}
+	_, err := h.svc.Login(ctx, ghost, ClientMeta{})
+	assertAppErr(t, err, 401, "INVALID_CREDENTIALS")
+	_, err = h.svc.Login(ctx, ghost, ClientMeta{})
+	assertAppErr(t, err, 401, "INVALID_CREDENTIALS")
+
+	_, err = h.svc.Login(ctx, ghost, ClientMeta{})
+	assertAppErr(t, err, 429, "RATE_LIMITED")
+}
+
+func TestLogin_RateLimitResponseIdenticalForKnownAndUnknownAccounts(t *testing.T) {
+	h := newHarnessWithProtection(t, LoginProtection{
+		IPLimiter:         ratelimit.NewMemoryLimiter(1, time.Minute),
+		IdentifierLimiter: ratelimit.NoopLimiter{},
+		Guard:             noopLoginGuard{},
+	})
+	h.register(t, "jane@example.com", "jane_doe")
+	ctx := context.Background()
+
+	// Exhaust the per-IP limit with a known account...
+	_, err := h.svc.Login(ctx, LoginInput{Identifier: "jane@example.com", Password: "password123"}, ClientMeta{IP: "203.0.113.7"})
+	if err != nil {
+		t.Fatalf("first login: %v", err)
+	}
+	_, known := h.svc.Login(ctx, LoginInput{Identifier: "jane@example.com", Password: "password123"}, ClientMeta{IP: "203.0.113.7"})
+	_, unknown := h.svc.Login(ctx, LoginInput{Identifier: "ghost@example.com", Password: "password123"}, ClientMeta{IP: "203.0.113.7"})
+
+	assertAppErr(t, known, 429, "RATE_LIMITED")
+	assertAppErr(t, unknown, 429, "RATE_LIMITED")
+
+	var ke, ue *apperr.Error
+	errors.As(known, &ke)
+	errors.As(unknown, &ue)
+	if ke.Message != ue.Message {
+		t.Errorf("RATE_LIMITED responses must be identical for known and unknown accounts: %q vs %q", ke.Message, ue.Message)
+	}
+}
+
+// loginTestClock is a controllable clock for lockout tests (avoids sleeping).
+type loginTestClock struct{ t time.Time }
+
+func (c *loginTestClock) Now() time.Time          { return c.t }
+func (c *loginTestClock) Advance(d time.Duration) { c.t = c.t.Add(d) }
+
+// ---------------------------------------------------------------------------
+// Session management (M5)
+// ---------------------------------------------------------------------------
+
+func TestListSessions_ActiveOnlyNewestFirst(t *testing.T) {
+	h := newTestHarness(t)
+	first := h.register(t, "jane@example.com", "jane_doe")
+	second, err := h.svc.Login(context.Background(), LoginInput{
+		Identifier: "jane@example.com",
+		Password:   "password123",
+	}, ClientMeta{UserAgent: "iPhone Safari", IP: "198.51.100.4"})
+	if err != nil {
+		t.Fatalf("second login: %v", err)
+	}
+
+	// Kill the first session so only the second remains active.
+	if err := h.svc.Logout(context.Background(), sessionIDOf(t, h, first)); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+
+	sessions, err := h.svc.ListSessions(context.Background(), first.User.ID)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("active sessions = %d, want 1 (revoked excluded)", len(sessions))
+	}
+	if sessions[0].ID != sessionIDOf(t, h, second) {
+		t.Error("listed the wrong session")
+	}
+	if sessions[0].UserAgent == nil || *sessions[0].UserAgent != "iPhone Safari" {
+		t.Errorf("user_agent = %v, want the login metadata", sessions[0].UserAgent)
+	}
+	if sessions[0].IPAddress == nil || *sessions[0].IPAddress != "198.51.100.4" {
+		t.Errorf("ip_address = %v, want the login metadata", sessions[0].IPAddress)
+	}
+	if sessions[0].CreatedAt.IsZero() || sessions[0].ExpiresAt.IsZero() {
+		t.Error("created/expires timestamps missing from session info")
+	}
+}
+
+func TestRevokeSession_InvalidatesTokens(t *testing.T) {
+	h := newTestHarness(t)
+	first := h.register(t, "jane@example.com", "jane_doe")
+	second, err := h.svc.Login(context.Background(), LoginInput{
+		Identifier: "jane@example.com",
+		Password:   "password123",
+	}, ClientMeta{})
+	if err != nil {
+		t.Fatalf("second login: %v", err)
+	}
+
+	// The access token must authenticate BEFORE revocation — this is what
+	// makes the post-revocation rejection below meaningful. The session ID
+	// is captured here once; re-deriving it after revocation is impossible
+	// by design (the token is dead).
+	ident, err := h.svc.Authenticate(context.Background(), second.AccessToken)
+	if err != nil {
+		t.Fatalf("pre-revocation authenticate: %v", err)
+	}
+	secondSessionID := ident.SessionID
+
+	if err := h.svc.RevokeSession(context.Background(), first.User.ID, secondSessionID); err != nil {
+		t.Fatalf("RevokeSession: %v", err)
+	}
+
+	// The revoked session's access AND refresh tokens die immediately.
+	_, err = h.svc.Authenticate(context.Background(), second.AccessToken)
+	assertAppErr(t, err, 401, "INVALID_TOKEN")
+	_, err = h.svc.Refresh(context.Background(), second.RefreshToken, ClientMeta{})
+	assertAppErr(t, err, 401, "INVALID_REFRESH_TOKEN")
+
+	// The other session is untouched.
+	if _, err := h.svc.Authenticate(context.Background(), first.AccessToken); err != nil {
+		t.Errorf("unrelated session was affected: %v", err)
+	}
+
+	// Revoking an already-revoked session is idempotent.
+	if err := h.svc.RevokeSession(context.Background(), first.User.ID, secondSessionID); err != nil {
+		t.Errorf("re-revoke should be a no-op: %v", err)
+	}
+}
+
+func TestRevokeSession_ForeignSessionIsNotFound(t *testing.T) {
+	h := newTestHarness(t)
+	jane := h.register(t, "jane@example.com", "jane_doe")
+	john := h.register(t, "john@example.com", "john_doe")
+
+	// Jane tries to revoke John's session. The ownership scope in the store
+	// makes this indistinguishable from a nonexistent session — and John's
+	// session must survive.
+	err := h.svc.RevokeSession(context.Background(), jane.User.ID, sessionIDOf(t, h, john))
+	assertAppErr(t, err, 404, "SESSION_NOT_FOUND")
+
+	if _, err := h.svc.Authenticate(context.Background(), john.AccessToken); err != nil {
+		t.Errorf("target session was revoked across users: %v", err)
+	}
+
+	// A random UUID behaves the same way.
+	err = h.svc.RevokeSession(context.Background(), jane.User.ID, uuid.New())
+	assertAppErr(t, err, 404, "SESSION_NOT_FOUND")
+}
+
+func TestRevokeOtherSessions_PreservesCurrent(t *testing.T) {
+	h := newTestHarness(t)
+	current := h.register(t, "jane@example.com", "jane_doe")
+	laptop, err := h.svc.Login(context.Background(), LoginInput{
+		Identifier: "jane@example.com",
+		Password:   "password123",
+	}, ClientMeta{})
+	if err != nil {
+		t.Fatalf("second login: %v", err)
+	}
+	tablet, err := h.svc.Login(context.Background(), LoginInput{
+		Identifier: "jane@example.com",
+		Password:   "password123",
+	}, ClientMeta{})
+	if err != nil {
+		t.Fatalf("third login: %v", err)
+	}
+
+	keep := sessionIDOf(t, h, current)
+	if err := h.svc.RevokeOtherSessions(context.Background(), current.User.ID, keep); err != nil {
+		t.Fatalf("RevokeOtherSessions: %v", err)
+	}
+
+	// Every other session is dead, access and refresh.
+	for _, res := range []*AuthResult{laptop, tablet} {
+		_, err := h.svc.Authenticate(context.Background(), res.AccessToken)
+		assertAppErr(t, err, 401, "INVALID_TOKEN")
+		_, err = h.svc.Refresh(context.Background(), res.RefreshToken, ClientMeta{})
+		assertAppErr(t, err, 401, "INVALID_REFRESH_TOKEN")
+	}
+
+	// The current session is untouched.
+	if _, err := h.svc.Authenticate(context.Background(), current.AccessToken); err != nil {
+		t.Errorf("current session was revoked by revoke-others: %v", err)
+	}
+	if _, err := h.svc.Refresh(context.Background(), current.RefreshToken, ClientMeta{}); err != nil {
+		t.Errorf("current refresh token was revoked by revoke-others: %v", err)
+	}
+
+	// Idempotent: a second call (with only the current session left) is fine.
+	if err := h.svc.RevokeOtherSessions(context.Background(), current.User.ID, keep); err != nil {
+		t.Errorf("second revoke-others should be a no-op: %v", err)
+	}
+
+	// And the listing now shows exactly one active session.
+	sessions, err := h.svc.ListSessions(context.Background(), current.User.ID)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != keep {
+		t.Errorf("active sessions after revoke-others = %+v, want only the kept one", sessions)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// JWT validation hardening (M5) — claim shape at the service boundary
+// ---------------------------------------------------------------------------
+
+// forgeJWT signs a token with arbitrary claims so tests can present tokens
+// that are structurally signed-correct but malformed in their claims, or
+// signed with a disallowed algorithm.
+func forgeJWT(t *testing.T, method jwt.SigningMethod, claims jwt.MapClaims) string {
+	t.Helper()
+	token := jwt.NewWithClaims(method, claims)
+	signed, err := token.SignedString([]byte(testJWTSecret))
+	if err != nil {
+		t.Fatalf("forge token: %v", err)
+	}
+	return signed
+}
+
+func validJWTClaims() jwt.MapClaims {
+	return jwt.MapClaims{
+		"iss": testJWTIssuer,
+		"sub": uuid.New().String(),
+		"sid": uuid.New().String(),
+		"iat": time.Now().Unix(),
+		"exp": time.Now().Add(15 * time.Minute).Unix(),
+	}
+}
+
+func TestAuthenticate_MissingSessionClaimRejected(t *testing.T) {
+	h := newTestHarness(t)
+	claims := validJWTClaims()
+	delete(claims, "sid")
+
+	_, err := h.svc.Authenticate(context.Background(), forgeJWT(t, jwt.SigningMethodHS256, claims))
+	assertAppErr(t, err, 401, "INVALID_TOKEN")
+}
+
+func TestAuthenticate_MissingSubjectClaimRejected(t *testing.T) {
+	h := newTestHarness(t)
+	claims := validJWTClaims()
+	delete(claims, "sub")
+
+	_, err := h.svc.Authenticate(context.Background(), forgeJWT(t, jwt.SigningMethodHS256, claims))
+	assertAppErr(t, err, 401, "INVALID_TOKEN")
+}
+
+func TestAuthenticate_NonUUIDSessionClaimRejected(t *testing.T) {
+	h := newTestHarness(t)
+	claims := validJWTClaims()
+	claims["sid"] = "not-a-uuid"
+
+	_, err := h.svc.Authenticate(context.Background(), forgeJWT(t, jwt.SigningMethodHS256, claims))
+	assertAppErr(t, err, 401, "INVALID_TOKEN")
+}
+
+func TestAuthenticate_WrongSigningAlgorithmRejected(t *testing.T) {
+	h := newTestHarness(t)
+	// Same secret, stronger algorithm: the verifier only ever accepts HS256.
+	_, err := h.svc.Authenticate(context.Background(), forgeJWT(t, jwt.SigningMethodHS384, validJWTClaims()))
+	assertAppErr(t, err, 401, "INVALID_TOKEN")
 }

@@ -33,14 +33,14 @@ func TestGenerateRefreshToken_Unique(t *testing.T) {
 	}
 }
 
-func TestHashRefreshToken_Properties(t *testing.T) {
+func TestHashToken_Properties(t *testing.T) {
 	token, err := GenerateRefreshToken()
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken: %v", err)
 	}
 
-	h1 := HashRefreshToken(token)
-	h2 := HashRefreshToken(token)
+	h1 := HashToken(token)
+	h2 := HashToken(token)
 
 	if len(h1) != 64 {
 		t.Errorf("hash length = %d, want 64 hex chars (SHA-256)", len(h1))
@@ -50,7 +50,7 @@ func TestHashRefreshToken_Properties(t *testing.T) {
 	}
 
 	other, _ := GenerateRefreshToken()
-	if HashRefreshToken(other) == h1 {
+	if HashToken(other) == h1 {
 		t.Error("different tokens produced the same hash")
 	}
 

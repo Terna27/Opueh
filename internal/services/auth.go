@@ -17,6 +17,7 @@ import (
 	"github.com/Tena-byte/opueh/internal/apperr"
 	"github.com/Tena-byte/opueh/internal/auth"
 	"github.com/Tena-byte/opueh/internal/models"
+	"github.com/Tena-byte/opueh/internal/ratelimit"
 	"github.com/Tena-byte/opueh/internal/repositories"
 )
 
@@ -73,19 +74,61 @@ type SessionStore interface {
 	RotateRefreshToken(ctx context.Context, oldTokenID uuid.UUID, newTokenHash string, newExpiresAt, now time.Time) error
 	RevokeSession(ctx context.Context, sessionID uuid.UUID) error
 	GetSessionAuthState(ctx context.Context, sessionID uuid.UUID) (*repositories.SessionAuthState, error)
+
+	ListUserSessions(ctx context.Context, userID uuid.UUID) ([]models.SessionInfo, error)
+	RevokeUserSession(ctx context.Context, userID, sessionID uuid.UUID) error
+	RevokeOtherSessions(ctx context.Context, userID, keepSessionID uuid.UUID) error
+}
+
+// LoginGuard tracks repeated login failures and the temporary lockout that
+// follows them, keyed by normalized identifier. The error returns exist so
+// a Redis-backed implementation can surface infrastructure failures later;
+// the in-memory ratelimit.FailureTracker satisfies this interface today.
+type LoginGuard interface {
+	IsLocked(ctx context.Context, key string) (bool, error)
+	RecordFailure(ctx context.Context, key string) error
+	Reset(ctx context.Context, key string) error
+}
+
+type noopLoginGuard struct{}
+
+func (noopLoginGuard) IsLocked(ctx context.Context, key string) (bool, error) { return false, nil }
+func (noopLoginGuard) RecordFailure(ctx context.Context, key string) error    { return nil }
+func (noopLoginGuard) Reset(ctx context.Context, key string) error            { return nil }
+
+// LoginProtection bundles the brute-force defenses around credential
+// verification: fixed-window rate limits per source IP and per account
+// identifier, plus a failure-count lockout. All three are interfaces so a
+// Redis-backed implementation can replace the in-memory ones later without
+// touching the service.
+type LoginProtection struct {
+	IPLimiter         ratelimit.Limiter // bounds aggregate guessing from one source
+	IdentifierLimiter ratelimit.Limiter // bounds guessing at one account from many sources
+	Guard             LoginGuard        // temporary lockout after repeated failures
+}
+
+// NoopLoginProtection is the do-nothing LoginProtection used by tests that
+// don't exercise brute-force behavior.
+func NoopLoginProtection() LoginProtection {
+	return LoginProtection{
+		IPLimiter:         ratelimit.NoopLimiter{},
+		IdentifierLimiter: ratelimit.NoopLimiter{},
+		Guard:             noopLoginGuard{},
+	}
 }
 
 // AuthService implements the authentication domain.
 type AuthService struct {
-	users    UserStore
-	sessions SessionStore
-	jwt      *auth.JWTManager
-	cfg      AuthConfig
+	users      UserStore
+	sessions   SessionStore
+	jwt        *auth.JWTManager
+	cfg        AuthConfig
+	protection LoginProtection
 }
 
 // NewAuthService constructs the service with its dependencies injected.
-func NewAuthService(users UserStore, sessions SessionStore, jwt *auth.JWTManager, cfg AuthConfig) *AuthService {
-	return &AuthService{users: users, sessions: sessions, jwt: jwt, cfg: cfg}
+func NewAuthService(users UserStore, sessions SessionStore, jwt *auth.JWTManager, cfg AuthConfig, protection LoginProtection) *AuthService {
+	return &AuthService{users: users, sessions: sessions, jwt: jwt, cfg: cfg, protection: protection}
 }
 
 func invalidCredentials() *apperr.Error {
@@ -133,15 +176,65 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput, meta Clien
 	return s.issueSession(ctx, user, meta)
 }
 
-// Login authenticates by email or username plus password. Unknown
-// identifier and wrong password return the same error (no user
-// enumeration). Suspended or banned accounts are rejected explicitly.
+// Login authenticates by email or username plus password, behind the
+// brute-force defenses: a per-IP rate limit, a per-identifier rate limit,
+// and a temporary lockout after repeated failures. Unknown identifier and
+// wrong password behave identically (including failure counting, so the
+// counters themselves can't be used to enumerate accounts). Suspended or
+// banned accounts are rejected explicitly after the password check.
 func (s *AuthService) Login(ctx context.Context, in LoginInput, meta ClientMeta) (*AuthResult, error) {
 	identifier := strings.ToLower(strings.TrimSpace(in.Identifier))
+
+	rateLimited := apperr.New(http.StatusTooManyRequests, "RATE_LIMITED", "Too many attempts. Please try again later.")
+
+	// Per-source-IP limit: bounds aggregate credential guessing from one
+	// client regardless of which accounts it targets.
+	allowed, err := s.protection.IPLimiter.Allow(ctx, "login:ip:"+meta.IP)
+	if err != nil {
+		return nil, fmt.Errorf("login ip limiter: %w", err)
+	}
+	if !allowed {
+		return nil, rateLimited
+	}
+
+	// Per-identifier limit: bounds guessing at one account even when the
+	// attacker rotates source IPs.
+	allowed, err = s.protection.IdentifierLimiter.Allow(ctx, "login:id:"+identifier)
+	if err != nil {
+		return nil, fmt.Errorf("login identifier limiter: %w", err)
+	}
+	if !allowed {
+		return nil, rateLimited
+	}
+
+	// Temporary lockout after repeated failures. Checked before any
+	// credential work; the lockout never extends while active, so this can
+	// never become permanent.
+	guardKey := "login:lock:" + identifier
+	locked, err := s.protection.Guard.IsLocked(ctx, guardKey)
+	if err != nil {
+		return nil, fmt.Errorf("login lockout check: %w", err)
+	}
+	if locked {
+		return nil, rateLimited
+	}
+
+	// recordFailure counts every failed attempt identically — unknown user,
+	// wrong password, unknown status — so failure counters leak nothing
+	// about whether an account exists.
+	recordFailure := func() error {
+		if err := s.protection.Guard.RecordFailure(ctx, guardKey); err != nil {
+			return fmt.Errorf("record login failure: %w", err)
+		}
+		return nil
+	}
 
 	user, err := s.users.GetByIdentifier(ctx, identifier)
 	if err != nil {
 		if errors.Is(err, repositories.ErrNotFound) {
+			if recErr := recordFailure(); recErr != nil {
+				return nil, recErr
+			}
 			return nil, invalidCredentials()
 		}
 		return nil, fmt.Errorf("lookup user: %w", err)
@@ -152,6 +245,9 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput, meta ClientMeta)
 		return nil, fmt.Errorf("verify password: %w", err)
 	}
 	if !ok || user.DeletedAt != nil {
+		if recErr := recordFailure(); recErr != nil {
+			return nil, recErr
+		}
 		return nil, invalidCredentials()
 	}
 
@@ -162,10 +258,24 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput, meta ClientMeta)
 	case "BANNED":
 		return nil, apperr.New(http.StatusForbidden, "ACCOUNT_BANNED", "This account has been banned")
 	default:
+		// Unknown status is treated exactly like a bad password.
+		if recErr := recordFailure(); recErr != nil {
+			return nil, recErr
+		}
 		return nil, invalidCredentials()
 	}
 
-	return s.issueSession(ctx, user, meta)
+	result, err := s.issueSession(ctx, user, meta)
+	if err != nil {
+		return nil, err
+	}
+
+	// Success clears the failure state so earlier mistakes don't count
+	// against the user.
+	if err := s.protection.Guard.Reset(ctx, guardKey); err != nil {
+		return nil, fmt.Errorf("reset login failures: %w", err)
+	}
+	return result, nil
 }
 
 // issueSession creates a session with its first refresh token and an
@@ -182,7 +292,7 @@ func (s *AuthService) issueSession(ctx context.Context, user *models.User, meta 
 	if err != nil {
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
-	if err := s.sessions.CreateRefreshToken(ctx, session.ID, auth.HashRefreshToken(refreshToken), now.Add(s.cfg.RefreshTokenTTL)); err != nil {
+	if err := s.sessions.CreateRefreshToken(ctx, session.ID, auth.HashToken(refreshToken), now.Add(s.cfg.RefreshTokenTTL)); err != nil {
 		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
@@ -205,7 +315,7 @@ func (s *AuthService) issueSession(ctx context.Context, user *models.User, meta 
 // token is treated as theft evidence — the whole session (token family) is
 // revoked. All failure modes return the same generic error to clients.
 func (s *AuthService) Refresh(ctx context.Context, refreshToken string, meta ClientMeta) (*AuthResult, error) {
-	state, err := s.sessions.GetRefreshTokenState(ctx, auth.HashRefreshToken(refreshToken))
+	state, err := s.sessions.GetRefreshTokenState(ctx, auth.HashToken(refreshToken))
 	if err != nil {
 		if errors.Is(err, repositories.ErrNotFound) {
 			return nil, invalidRefreshToken()
@@ -238,7 +348,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string, meta Cli
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
 
-	err = s.sessions.RotateRefreshToken(ctx, state.TokenID, auth.HashRefreshToken(newRefreshToken), now.Add(s.cfg.RefreshTokenTTL), now)
+	err = s.sessions.RotateRefreshToken(ctx, state.TokenID, auth.HashToken(newRefreshToken), now.Add(s.cfg.RefreshTokenTTL), now)
 	if err != nil {
 		// Lost a concurrent-rotation race: same theft signal as replay.
 		if errors.Is(err, repositories.ErrTokenAlreadyUsed) {
@@ -273,6 +383,38 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string, meta Cli
 func (s *AuthService) Logout(ctx context.Context, sessionID uuid.UUID) error {
 	if err := s.sessions.RevokeSession(ctx, sessionID); err != nil {
 		return fmt.Errorf("revoke session: %w", err)
+	}
+	return nil
+}
+
+// ListSessions returns the user's active sessions with their metadata.
+func (s *AuthService) ListSessions(ctx context.Context, userID uuid.UUID) ([]models.SessionInfo, error) {
+	sessions, err := s.sessions.ListUserSessions(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	return sessions, nil
+}
+
+// RevokeSession revokes one of the user's sessions. Ownership is enforced
+// in the store (scoped by user_id), so revoking another user's session —
+// or a nonexistent one — returns the same SESSION_NOT_FOUND error: no
+// existence oracle. Idempotent on already-revoked sessions.
+func (s *AuthService) RevokeSession(ctx context.Context, userID, sessionID uuid.UUID) error {
+	if err := s.sessions.RevokeUserSession(ctx, userID, sessionID); err != nil {
+		if errors.Is(err, repositories.ErrNotFound) {
+			return apperr.New(http.StatusNotFound, "SESSION_NOT_FOUND", "Session not found")
+		}
+		return fmt.Errorf("revoke session: %w", err)
+	}
+	return nil
+}
+
+// RevokeOtherSessions revokes every active session of the user except the
+// current one (and their refresh tokens). Idempotent by construction.
+func (s *AuthService) RevokeOtherSessions(ctx context.Context, userID, keepSessionID uuid.UUID) error {
+	if err := s.sessions.RevokeOtherSessions(ctx, userID, keepSessionID); err != nil {
+		return fmt.Errorf("revoke other sessions: %w", err)
 	}
 	return nil
 }

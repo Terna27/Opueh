@@ -161,6 +161,20 @@ func (r *SessionRepository) RevokeSession(ctx context.Context, sessionID uuid.UU
 	}
 	defer tx.Rollback(ctx) // no-op after a successful commit
 
+	if err := revokeSessionTx(ctx, tx, sessionID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit revoke tx: %w", err)
+	}
+	return nil
+}
+
+// revokeSessionTx revokes a session and its unconsumed refresh tokens
+// inside an existing transaction, so callers can combine it with ownership
+// checks and other writes atomically.
+func revokeSessionTx(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `
 		UPDATE sessions SET revoked_at = now()
 		WHERE id = $1 AND revoked_at IS NULL`,
@@ -176,9 +190,119 @@ func (r *SessionRepository) RevokeSession(ctx context.Context, sessionID uuid.UU
 	); err != nil {
 		return fmt.Errorf("revoke session refresh tokens: %w", err)
 	}
+	return nil
+}
+
+// ListUserSessions returns the user's active (non-revoked, unexpired)
+// sessions, newest first, with the client metadata a user needs to
+// recognize their devices. Revoked and expired sessions are history, not
+// active sessions, and are excluded.
+func (r *SessionRepository) ListUserSessions(ctx context.Context, userID uuid.UUID) ([]models.SessionInfo, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, created_at, last_used_at, expires_at, user_agent, host(ip_address)
+		FROM sessions
+		WHERE user_id = $1
+		  AND revoked_at IS NULL
+		  AND expires_at > now()
+		ORDER BY created_at DESC`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list user sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []models.SessionInfo
+	for rows.Next() {
+		var s models.SessionInfo
+		if err := rows.Scan(&s.ID, &s.CreatedAt, &s.LastUsedAt, &s.ExpiresAt, &s.UserAgent, &s.IPAddress); err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list user sessions: %w", err)
+	}
+	return out, nil
+}
+
+// RevokeUserSession revokes one of the user's own sessions (and its refresh
+// tokens) — ownership is enforced by the user_id in the WHERE clause, so a
+// request naming another user's session looks exactly like a request naming
+// a nonexistent one (ErrNotFound): no existence oracle. Revoking an
+// already-revoked session is a no-op (idempotent).
+func (r *SessionRepository) RevokeUserSession(ctx context.Context, userID, sessionID uuid.UUID) error {
+	// Pre-check for a clear not-found signal and idempotency. The revocation
+	// itself still runs guarded inside the transaction, so a concurrent
+	// double revoke is safe.
+	var revokedAt *time.Time
+	err := r.pool.QueryRow(ctx, `
+		SELECT revoked_at FROM sessions
+		WHERE id = $1 AND user_id = $2`,
+		sessionID, userID,
+	).Scan(&revokedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: session %s for user %s", ErrNotFound, sessionID, userID)
+		}
+		return fmt.Errorf("lookup session for revoke: %w", err)
+	}
+	if revokedAt != nil {
+		return nil // already revoked — idempotent
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin revoke tx: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op after a successful commit
+
+	if err := revokeSessionTx(ctx, tx, sessionID); err != nil {
+		return err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit revoke tx: %w", err)
+	}
+	return nil
+}
+
+// RevokeOtherSessions revokes every active session of the user except
+// keepSessionID, together with their refresh tokens, in one transaction.
+// Idempotent by construction: already-revoked sessions match no rows.
+func (r *SessionRepository) RevokeOtherSessions(ctx context.Context, userID, keepSessionID uuid.UUID) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin revoke-others tx: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op after a successful commit
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE refresh_tokens SET revoked_at = now()
+		WHERE revoked_at IS NULL
+		  AND session_id IN (
+			SELECT id FROM sessions
+			WHERE user_id = $1
+			  AND id <> $2
+			  AND revoked_at IS NULL
+		  )`,
+		userID, keepSessionID,
+	); err != nil {
+		return fmt.Errorf("revoke other sessions' refresh tokens: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE sessions SET revoked_at = now()
+		WHERE user_id = $1
+		  AND id <> $2
+		  AND revoked_at IS NULL`,
+		userID, keepSessionID,
+	); err != nil {
+		return fmt.Errorf("revoke other sessions: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit revoke-others tx: %w", err)
 	}
 	return nil
 }

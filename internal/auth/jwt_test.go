@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
@@ -107,5 +108,47 @@ func TestJWT_AlgNoneRejected(t *testing.T) {
 	}
 	if _, err := m.Verify(strings.TrimSuffix(forged, ".")); err == nil {
 		t.Error("alg=none token without signature separator was accepted")
+	}
+}
+
+// TestJWT_WrongAlgorithmRejected forges an HS384 token signed with the same
+// secret: only HS256 is ever accepted, regardless of key validity.
+func TestJWT_WrongAlgorithmRejected(t *testing.T) {
+	m := NewJWTManager(testSecret, "opueh-test", 15*time.Minute)
+
+	claims := jwt.MapClaims{
+		"sub": uuid.New().String(),
+		"sid": uuid.New().String(),
+		"iss": "opueh-test",
+		"exp": time.Now().Add(15 * time.Minute).Unix(),
+	}
+	forged, err := jwt.NewWithClaims(jwt.SigningMethodHS384, claims).SignedString([]byte(testSecret))
+	if err != nil {
+		t.Fatalf("forge HS384 token: %v", err)
+	}
+
+	if _, err := m.Verify(forged); err == nil {
+		t.Error("HS384 token signed with the correct secret was accepted")
+	}
+}
+
+// TestJWT_MissingExpiryRejected forges a structurally valid token with no
+// exp claim: expiry is mandatory, not optional.
+func TestJWT_MissingExpiryRejected(t *testing.T) {
+	m := NewJWTManager(testSecret, "opueh-test", 15*time.Minute)
+
+	claims := jwt.MapClaims{
+		"sub": uuid.New().String(),
+		"sid": uuid.New().String(),
+		"iss": "opueh-test",
+		"iat": time.Now().Unix(),
+	}
+	forged, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testSecret))
+	if err != nil {
+		t.Fatalf("forge no-exp token: %v", err)
+	}
+
+	if _, err := m.Verify(forged); err == nil {
+		t.Error("token without an exp claim was accepted")
 	}
 }
