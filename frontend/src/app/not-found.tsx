@@ -1,5 +1,8 @@
 import Link from "next/link";
 
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
+
 /**
  * Route-level 404. Rendered inside the root layout, so the header and footer
  * stay available and the user is never stuck on a dead end.
@@ -17,10 +20,12 @@ export default function NotFound() {
         The link may be broken, or the page may have been moved.
       </p>
 
-      <Link
-        href="/"
-        className="mt-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-      >
+      {/*
+        A link that looks like a button. `buttonVariants` exists for exactly
+        this: the styling of a Button on an element that is not a <button>,
+        so navigation stays a link and keeps its own semantics.
+      */}
+      <Link href="/" className={cn(buttonVariants(), "mt-2")}>
         Back to home
       </Link>
     </div>

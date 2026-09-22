@@ -2,6 +2,8 @@
 
 import { useEffect, useId, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+
 import { NavLinks } from "./nav-links";
 
 /**
@@ -38,16 +40,16 @@ export function MobileNav() {
 
   return (
     <div className="md:hidden">
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="icon"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         aria-controls={panelId}
         aria-label={open ? "Close navigation menu" : "Open navigation menu"}
-        className="inline-flex size-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-foreground/5 hover:text-foreground"
       >
         {open ? <CloseIcon /> : <MenuIcon />}
-      </button>
+      </Button>
 
       {open ? (
         <div

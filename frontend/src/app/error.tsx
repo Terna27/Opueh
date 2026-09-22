@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 
+import { Button } from "@/components/ui/button";
+
 /**
  * Route-level error boundary.
  *
@@ -33,13 +35,9 @@ export default function ErrorBoundary({
         continues, come back later.
       </p>
 
-      <button
-        type="button"
-        onClick={reset}
-        className="mt-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-      >
+      <Button onClick={reset} className="mt-2">
         Try again
-      </button>
+      </Button>
     </div>
   );
 }

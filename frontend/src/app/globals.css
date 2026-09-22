@@ -22,6 +22,12 @@
   --primary: #4f46e5;
   --primary-foreground: #ffffff;
   --focus-ring: #4f46e5;
+
+  /* Destructive is split in two: text needs a darker red to stay legible on
+     white, while a filled button needs a red that white text stays legible on. */
+  --destructive: #dc2626;
+  --destructive-solid: #dc2626;
+  --destructive-foreground: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -34,6 +40,13 @@
     --primary: #818cf8;
     --primary-foreground: #09090b;
     --focus-ring: #818cf8;
+
+    /* On a near-black background the error text has to lighten to stay
+       readable, but the filled button keeps its darker red so white text on
+       it still passes contrast. */
+    --destructive: #f87171;
+    --destructive-solid: #dc2626;
+    --destructive-foreground: #ffffff;
   }
 }
 
@@ -45,6 +58,9 @@
   --color-muted: var(--muted);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-solid: var(--destructive-solid);
+  --color-destructive-foreground: var(--destructive-foreground);
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
