@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { site } from "@/lib/site";
 
+import { Container } from "./container";
 import { MobileNav } from "./mobile-nav";
 import { NavLinks } from "./nav-links";
 
@@ -19,7 +20,7 @@ import { NavLinks } from "./nav-links";
 export function SiteHeader() {
   return (
     <header className="relative sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
-      <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-4 px-4 sm:px-6">
+      <Container className="flex h-16 items-center justify-between gap-4">
         <Link
           href="/"
           className="flex items-center gap-2 rounded-md text-base font-semibold tracking-tight text-foreground"
@@ -37,7 +38,7 @@ export function SiteHeader() {
           <NavLinks className="hidden items-center gap-1 md:flex" />
           <MobileNav />
         </nav>
-      </div>
+      </Container>
     </header>
   );
 }

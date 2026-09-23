@@ -1,31 +1,46 @@
-import { site } from "@/lib/site";
+import type { Metadata } from "next";
+
+import { ClosingCta } from "@/components/landing/closing-cta";
+import { Community } from "@/components/landing/community";
+import { FeaturePreview } from "@/components/landing/feature-preview";
+import { Hero } from "@/components/landing/hero";
+import { HowItWorks } from "@/components/landing/how-it-works";
+import { site, siteTitle } from "@/lib/site";
 
 /**
- * Home route.
+ * `absolute` on the title is deliberate. The root layout applies a
+ * `%s · Opueh` template to any page that sets a title, which would turn the
+ * home page's title into "Opueh — Watch, share... · Opueh". The landing page
+ * is the one route that should carry the full brand line unsuffixed.
  *
- * An intentionally plain placeholder: this milestone proves the shell —
- * routing, layout, header, footer and styling — runs end to end. The real
- * landing experience is Milestone 3, which replaces this file wholesale.
+ * Both strings come from `lib/site.ts` rather than being written out here, so
+ * the page title and the description cannot drift from the ones the layout,
+ * the header and the footer already use.
+ */
+export const metadata: Metadata = {
+  title: { absolute: siteTitle },
+  description: site.description,
+};
+
+/**
+ * The landing page.
+ *
+ * A Server Component. Every section below is static markup, and the only
+ * interactive parts of the page — the header's navigation — live in the
+ * layout, so none of this ships to the browser as JavaScript.
+ *
+ * The page deliberately ends on anchors rather than a sign-up form. Opueh has
+ * no account system yet, and a call to action that cannot be completed is
+ * worse than one that scrolls to what it promised.
  */
 export default function HomePage() {
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center justify-center gap-6 px-4 py-24 text-center sm:px-6">
-      <p className="rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium tracking-wide text-muted uppercase">
-        Milestone 1 · Foundation
-      </p>
-
-      <h1 className="max-w-2xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-        {site.name}
-      </h1>
-
-      <p className="max-w-xl text-base leading-7 text-muted sm:text-lg">
-        {site.description}
-      </p>
-
-      <p className="max-w-xl text-sm leading-6 text-muted">
-        The landing page arrives in Milestone 3. This route exists so the shell,
-        navigation and styling can be verified end to end.
-      </p>
-    </div>
+    <>
+      <Hero />
+      <HowItWorks />
+      <FeaturePreview />
+      <Community />
+      <ClosingCta />
+    </>
   );
 }
