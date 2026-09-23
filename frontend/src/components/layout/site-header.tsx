@@ -3,6 +3,7 @@ import Link from "next/link";
 import { site } from "@/lib/site";
 
 import { Container } from "./container";
+import { AuthNav } from "./auth-nav";
 import { MobileNav } from "./mobile-nav";
 import { NavLinks } from "./nav-links";
 
@@ -36,6 +37,10 @@ export function SiteHeader() {
 
         <nav aria-label="Primary" className="flex items-center gap-2">
           <NavLinks className="hidden items-center gap-1 md:flex" />
+          {/* Session controls, not navigation: rendered next to the links
+              because that is where they belong visually, and they announce
+              themselves as buttons and links rather than as page sections. */}
+          <AuthNav />
           <MobileNav />
         </nav>
       </Container>

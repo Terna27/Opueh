@@ -54,9 +54,11 @@ export const hero = {
   // written a second time here, so the brand line has exactly one definition.
   headline: site.tagline,
   description:
-    "Opueh is being built as a place to publish video and talk about it in the same room. No account system is switched on yet — nothing on this page signs you up or stores anything.",
-  primaryCta: { label: "See how it works", id: landingSections.howItWorks.id },
-  secondaryCta: { label: "What's coming", id: landingSections.features.id },
+    "Opueh is being built as a place to publish video and talk about it in the same room. Accounts are open now — you can create one and log in, though the feed and profiles are still to come.",
+  // Real hrefs rather than section ids: these now lead to the auth pages, so
+  // a call to action is something a visitor can actually complete.
+  primaryCta: { label: "Create your account", href: "/register" },
+  secondaryCta: { label: "Log in", href: "/login" },
 } as const;
 
 export const howItWorks = {
@@ -163,10 +165,10 @@ export const community = {
 export const closingCta = {
   title: "The conversation is the point",
   description:
-    "Opueh is being built in the open, one milestone at a time. The feed, profiles and conversations come next.",
-  primaryCta: { label: "See what's coming", id: landingSections.features.id },
+    "Opueh is being built in the open, one milestone at a time. Accounts are open now; the feed, profiles and conversations come next.",
+  primaryCta: { label: "Create your account", href: "/register" },
   secondaryCta: {
     label: "How it works",
-    id: landingSections.howItWorks.id,
+    href: sectionHref(landingSections.howItWorks.id),
   },
 } as const;

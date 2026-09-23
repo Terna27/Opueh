@@ -1,24 +1,35 @@
-import { render } from "@testing-library/react";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import HomePage from "@/app/page";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { SiteHeader } from "@/components/layout/site-header";
 import { primaryNav } from "@/lib/navigation";
 
+import { renderWithSession, signedOutFetch } from "../support/session";
+
 // NavLinks reads the current route, which only exists inside the Next.js
 // runtime. Pinning it to the landing route tests the shell as a visitor to the
 // landing page actually sees it.
+//
+// `useRouter` is stubbed too: the header's session controls use it to navigate
+// after a logout.
 const { usePathnameMock } = vi.hoisted(() => ({
   usePathnameMock: vi.fn<() => string>(() => "/"),
 }));
 
 vi.mock("next/navigation", () => ({
   usePathname: usePathnameMock,
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));
 
 beforeEach(() => {
   usePathnameMock.mockReturnValue("/");
+  vi.stubGlobal("fetch", signedOutFetch());
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 /**
@@ -26,9 +37,13 @@ beforeEach(() => {
  * the only way these assertions mean anything. Checking the page's anchors
  * against the page's own sections would miss the header, and checking them
  * separately would miss a section being renamed out from under a link.
+ *
+ * Waits for the header's session controls to settle, so the routes they link
+ * to are covered by the assertions below rather than being skipped while the
+ * header still shows its loading placeholder.
  */
-function renderLanding() {
-  return render(
+async function renderLanding() {
+  const result = renderWithSession(
     <>
       <SiteHeader />
       <main>
@@ -37,11 +52,14 @@ function renderLanding() {
       <SiteFooter />
     </>,
   );
+
+  await screen.findByRole("link", { name: "Sign up" });
+  return result;
 }
 
 describe("landing page links", () => {
-  test("every in-page anchor resolves to an element that exists", () => {
-    const { container } = renderLanding();
+  test("every in-page anchor resolves to an element that exists", async () => {
+    const { container } = await renderLanding();
 
     const anchors = [...container.querySelectorAll('a[href*="#"]')];
     expect(anchors.length).toBeGreaterThan(0);
@@ -60,12 +78,13 @@ describe("landing page links", () => {
     }
   });
 
-  test("links to no internal route that has not been built", () => {
-    const { container } = renderLanding();
+  test("links to no internal route that has not been built", async () => {
+    const { container } = await renderLanding();
 
-    // "/" is the only route that exists. Anything else — /register, /login —
-    // would render a 404, so it must be added here deliberately.
-    const builtRoutes = new Set(["/"]);
+    // Every route that exists. A new link to something not listed here would
+    // render a 404, so it has to be added deliberately — which is how /login
+    // and /register arrived when the account pages were built.
+    const builtRoutes = new Set(["/", "/login", "/register"]);
 
     for (const anchor of container.querySelectorAll("a[href]")) {
       const href = anchor.getAttribute("href") ?? "";
@@ -80,8 +99,8 @@ describe("landing page links", () => {
     }
   });
 
-  test("gives every navigation entry a link with a matching destination", () => {
-    const { container } = renderLanding();
+  test("gives every navigation entry a link with a matching destination", async () => {
+    const { container } = await renderLanding();
 
     for (const entry of primaryNav) {
       const link = [...container.querySelectorAll("a")].find(
@@ -94,8 +113,8 @@ describe("landing page links", () => {
     }
   });
 
-  test("describes the call to action destinations in words, not 'click here'", () => {
-    const { container } = renderLanding();
+  test("describes the call to action destinations in words, not 'click here'", async () => {
+    const { container } = await renderLanding();
 
     for (const anchor of container.querySelectorAll('a[href*="#"]')) {
       const text = anchor.textContent?.trim() ?? "";

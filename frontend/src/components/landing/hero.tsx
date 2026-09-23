@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Container } from "@/components/layout/container";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
-import { hero, sectionHref } from "@/lib/landing";
+import { hero } from "@/lib/landing";
 
 import { PlatformPreview } from "./platform-preview";
 
@@ -55,14 +55,14 @@ export function Hero() {
 
           <div className="mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
             <Link
-              href={sectionHref(hero.primaryCta.id)}
+              href={hero.primaryCta.href}
               className={cn(buttonVariants({ size: "lg" }), "w-full sm:w-auto")}
             >
               {hero.primaryCta.label}
             </Link>
 
             <Link
-              href={sectionHref(hero.secondaryCta.id)}
+              href={hero.secondaryCta.href}
               className={cn(
                 buttonVariants({ variant: "outline", size: "lg" }),
                 "w-full sm:w-auto",

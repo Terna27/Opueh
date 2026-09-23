@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 
 import { SiteFooter } from "@/components/layout/site-footer";
 import { SiteHeader } from "@/components/layout/site-header";
+import { SessionProvider } from "@/lib/auth/session-context";
 import { site } from "@/lib/site";
 
 import "./globals.css";
@@ -50,13 +51,15 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           Skip to content
         </a>
 
-        <SiteHeader />
+        <SessionProvider>
+          <SiteHeader />
 
-        <main id="main" className="flex flex-1 flex-col">
-          {children}
-        </main>
+          <main id="main" className="flex flex-1 flex-col">
+            {children}
+          </main>
 
-        <SiteFooter />
+          <SiteFooter />
+        </SessionProvider>
       </body>
     </html>
   );

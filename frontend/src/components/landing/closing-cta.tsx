@@ -4,7 +4,7 @@ import { Container } from "@/components/layout/container";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
-import { closingCta, sectionHref } from "@/lib/landing";
+import { closingCta } from "@/lib/landing";
 
 /**
  * The closing call to action.
@@ -44,14 +44,14 @@ export function ClosingCta() {
 
           <div className="mt-4 flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
             <Link
-              href={sectionHref(closingCta.primaryCta.id)}
+              href={closingCta.primaryCta.href}
               className={cn(buttonVariants({ size: "lg" }), "w-full sm:w-auto")}
             >
               {closingCta.primaryCta.label}
             </Link>
 
             <Link
-              href={sectionHref(closingCta.secondaryCta.id)}
+              href={closingCta.secondaryCta.href}
               className={cn(
                 buttonVariants({ variant: "outline", size: "lg" }),
                 "w-full sm:w-auto",
