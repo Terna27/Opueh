@@ -67,12 +67,24 @@ export function AuthNav() {
   if (session.status === "signed-in") {
     return (
       <span className="flex items-center gap-2">
-        <span
-          className="max-w-24 truncate text-sm font-medium text-foreground"
-          title={session.user.username}
+        {/*
+          The username is the link to the public profile. `truncate` needs a
+          width to truncate to, and the full name stays reachable through the
+          title attribute for anyone whose name is cut short.
+        */}
+        <Link
+          href={`/u/${session.user.username}`}
+          title={`View @${session.user.username}'s profile`}
+          className="max-w-24 truncate text-sm font-medium text-foreground hover:underline"
         >
           {session.user.username}
-        </span>
+        </Link>
+        <Link
+          href="/settings/profile"
+          className={buttonVariants({ variant: "ghost", size: "sm" })}
+        >
+          Settings
+        </Link>
         <Button
           variant="ghost"
           size="sm"

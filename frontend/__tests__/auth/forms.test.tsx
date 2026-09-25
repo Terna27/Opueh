@@ -158,7 +158,16 @@ describe("LoginForm", () => {
     submit();
 
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/"));
-    expect(refreshMock).toHaveBeenCalled();
+
+    // `refresh()` refreshes the CURRENT route and clears its client cache,
+    // which supersedes the push while it is still an uncommitted transition.
+    // With both calls present, logging in navigated nowhere: the user stayed
+    // on the form, signed in, with no sign anything had happened.
+    //
+    // Asserted as an absence because the failure mode is silent. A mocked
+    // router obeys both calls happily, so nothing but this line stops it
+    // coming back — the real browser found it, not this suite.
+    expect(refreshMock).not.toHaveBeenCalled();
   });
 
   test("disables the button while the request is in flight", async () => {
@@ -222,9 +231,11 @@ describe("RegisterForm", () => {
     fill("Password", "correct horse battery staple");
     submit();
 
-    await waitFor(() =>
-      expect(pushMock).toHaveBeenCalledWith("/"),
-    );
+    // Onboarding, not home. Registering is the one moment the app knows for
+    // certain that this user has never chosen any interests, so it is the only
+    // place the question can be asked without nagging someone who cleared
+    // their selection on purpose.
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/onboarding"));
     // Sent explicitly as an empty string rather than omitted: the Go decoder
     // rejects unknown fields and treats a missing one and an empty one alike.
     expect(bodySentTo(fetchMock, "/api/auth/register")).toEqual({

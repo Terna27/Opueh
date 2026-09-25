@@ -86,8 +86,20 @@ export function RegisterForm() {
       // proxy has already stored it, so there is no reason to ask them to log
       // in again with the password they just chose.
       adoptUser(result.user);
-      router.push("/");
-      router.refresh();
+      // No router.refresh() here. It refreshes the CURRENT route — /register —
+      // and clears that route's client cache, which supersedes this push while
+      // it is still an uncommitted transition. The result was that registering
+      // never navigated at all: the user stayed on the form, signed in, with no
+      // sign that anything had happened. The push already requests the
+      // destination as a fresh render, so it picks up the new cookies on its
+      // own.
+      //
+      // Onboarding, not home. Registering is the one moment the app knows for
+      // certain that a user has never chosen any interests — the endpoint
+      // itself cannot say so, because an empty selection is a valid state for
+      // someone who deliberately cleared theirs. Asking here is the only point
+      // at which the question is unambiguous, and it never nags anyone twice.
+      router.push("/onboarding");
       return;
     }
 

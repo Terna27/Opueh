@@ -25,6 +25,13 @@ export const PASSWORD_MAX_LENGTH = 128;
 export const DISPLAY_NAME_MAX_LENGTH = 50;
 export const EMAIL_MAX_LENGTH = 254;
 
+/** Mirrors `MaxBioLength` in internal/services/profile.go. */
+export const BIO_MAX_LENGTH = 500;
+
+/** Mirrors `MinInterests` and `MaxInterests` in internal/services/category.go. */
+export const MIN_INTERESTS = 1;
+export const MAX_INTERESTS = 10;
+
 /*
  * One known divergence from the backend, recorded rather than papered over.
  *
@@ -94,10 +101,77 @@ export function validatePassword(value: string): ValidationMessage {
 /**
  * Display name is optional — the backend falls back to the username when it
  * is empty — so an empty value is valid here.
+ *
+ * This is the REGISTRATION rule. Editing a profile is stricter; see
+ * `validateProfileDisplayName`.
  */
 export function validateDisplayName(value: string): ValidationMessage {
   if (value.trim().length > DISPLAY_NAME_MAX_LENGTH) {
     return `Display name must be ${DISPLAY_NAME_MAX_LENGTH} characters or fewer.`;
+  }
+  return undefined;
+}
+
+/**
+ * The display name rule for editing a profile, which is NOT the registration
+ * one, and the difference is the backend's.
+ *
+ * `buildProfilePatch` in internal/services/profile.go rejects a supplied
+ * `display_name` that is empty after trimming — "display_name cannot be empty
+ * when supplied" — because a PATCH of that field is an instruction to set it,
+ * and there is no username fallback on that path. Registration treats an empty
+ * display name as "use the username"; an edit cannot.
+ *
+ * The wording differs from the backend's too: this is shown beneath a labelled
+ * field, where "Display name is required." reads better than the backend's
+ * identifier-flavoured "display_name cannot be empty when supplied". The rule
+ * is identical; only the presentation differs.
+ */
+export function validateProfileDisplayName(value: string): ValidationMessage {
+  if (value.trim() === "") {
+    return "Display name is required.";
+  }
+  return validateDisplayName(value);
+}
+
+/**
+ * Bio is optional, and an empty one is meaningful rather than merely allowed:
+ * supplying an empty bio is how a user CLEARS it. So an empty value is valid
+ * here, and the form sends it as an empty string rather than omitting the
+ * field.
+ *
+ * Like the backend, the limit is measured after trimming — `buildProfilePatch`
+ * trims before comparing, so measuring the untrimmed value here would reject
+ * input the API would have accepted.
+ */
+export function validateBio(value: string): ValidationMessage {
+  if (value.trim().length > BIO_MAX_LENGTH) {
+    return `Bio must be ${BIO_MAX_LENGTH} characters or fewer.`;
+  }
+  return undefined;
+}
+
+/**
+ * Whether a selection is a valid number of interests.
+ *
+ * The messages are the backend's own sentences, not the display-adapted
+ * phrasing the rest of this module uses. Every other rule here is rewritten
+ * for a labelled field; these two are left verbatim on purpose, because the
+ * selection count is the one rule a user is most likely to hit by accident and
+ * hearing the API's exact words — in the UI and in a direct call — makes it
+ * obvious they are the same rule.
+ *
+ * Note that `MaxInterests` is the count of the selection, not of the
+ * catalogue: with ten categories seeded, "at most 10" is satisfiable, so the
+ * upper bound is a rule the UI must still enforce rather than one it can never
+ * reach.
+ */
+export function validateInterestCount(count: number): ValidationMessage {
+  if (count < MIN_INTERESTS) {
+    return `at least ${MIN_INTERESTS} category must be supplied`;
+  }
+  if (count > MAX_INTERESTS) {
+    return `at most ${MAX_INTERESTS} categories may be selected`;
   }
   return undefined;
 }

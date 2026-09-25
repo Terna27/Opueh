@@ -7,6 +7,7 @@ import {
   httpStatusFor,
   isAccessTokenRejected,
   isAlreadySignedOut,
+  isProfileMissing,
   isSessionOver,
   parseApiError,
 } from "@/lib/api/errors";
@@ -46,6 +47,48 @@ describe("parseApiError", () => {
     // and must not be mistaken for a code that carries meaning here.
     expect(error.code).toBe("INTERNAL");
     expect(error.message).toBe("A code this app has not seen");
+  });
+
+  it("keeps the two codes the profile and category endpoints branch on", () => {
+    // Without these in the union both would collapse to INTERNAL, and the
+    // public profile page — which renders a 404 for USER_NOT_FOUND — would
+    // show "an unexpected error occurred" for an ordinary miss.
+    const missingUser = parseApiError(404, {
+      error: { code: "USER_NOT_FOUND", message: "user not found" },
+    });
+    expect(missingUser.code).toBe("USER_NOT_FOUND");
+
+    const missingCategory = parseApiError(404, {
+      error: { code: "CATEGORY_NOT_FOUND", message: "category not found" },
+    });
+    expect(missingCategory.code).toBe("CATEGORY_NOT_FOUND");
+  });
+});
+
+describe("isProfileMissing", () => {
+  it("reads a missing user as a missing profile", () => {
+    expect(
+      isProfileMissing(
+        new ApiError("USER_NOT_FOUND", "user not found", 404),
+      ),
+    ).toBe(true);
+    // What a routing-layer miss would produce, rather than the handler's own.
+    expect(isProfileMissing(new ApiError("NOT_FOUND", "not found", 404))).toBe(
+      true,
+    );
+  });
+
+  it("does not read a failure as a missing profile", () => {
+    // The distinction the profile page turns into a 404 page versus an error
+    // state. "This user does not exist" and "Opueh is down" are not the same
+    // sentence to a reader.
+    expect(
+      isProfileMissing(ApiError.upstreamUnavailable()),
+    ).toBe(false);
+    expect(isProfileMissing(new ApiError("INTERNAL", "boom", 500))).toBe(false);
+    expect(
+      isProfileMissing(new ApiError("UNAUTHENTICATED", "nope", 401)),
+    ).toBe(false);
   });
 });
 

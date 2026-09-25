@@ -17,8 +17,13 @@ import { FormError } from "./form-error";
  * Everything else is the backend's verdict, and its message is shown as it
  * arrives. Inventing a per-field mapping here would mean guessing which field
  * `VALIDATION_ERROR` referred to, and being wrong about it.
+ *
+ * `next` is where to go after signing in — the page the visitor was trying to
+ * reach before the guard sent them here. It arrives already validated by
+ * `safeNext` on the server, so this component only has to fall back when it is
+ * absent.
  */
-export function LoginForm() {
+export function LoginForm({ next }: { next?: string | null }) {
   const router = useRouter();
   const { adoptUser } = useSession();
 
@@ -54,10 +59,17 @@ export function LoginForm() {
 
     if (result.ok) {
       adoptUser(result.user);
-      // The header reads the session from context, so it updates immediately;
-      // the refresh re-renders anything server-rendered that depends on it.
-      router.push("/");
-      router.refresh();
+      // No router.refresh() alongside this push. It refreshes the current
+      // route and clears that route's client cache, which supersedes the push
+      // while it is still an uncommitted transition — the navigation is then
+      // dropped and the user is left staring at the login form, signed in. The
+      // push requests the destination as a fresh render, so anything
+      // server-rendered there reads the new cookies anyway.
+      //
+      // `next` is the page they were headed for before the guard intervened,
+      // already validated server-side. Home is the fallback for the ordinary
+      // case of someone who simply came to log in.
+      router.push(next ?? "/");
       // `submitting` is deliberately not reset: the form is on its way out,
       // and re-enabling the button would allow a second submit in the gap.
       return;

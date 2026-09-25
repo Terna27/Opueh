@@ -114,6 +114,52 @@ export function stringField(
   return typeof value === "string" ? value : "";
 }
 
+/**
+ * Pull one OPTIONAL string field out of the body, or `undefined` to omit it.
+ *
+ * For PATCH, where a missing field and an empty one are different requests:
+ * upstream the struct fields are pointers, so an absent `bio` leaves the
+ * existing one alone while `bio: ""` clears it. Returning `undefined` lets the
+ * caller omit the key, and `JSON.stringify` then drops it.
+ *
+ * A field that is present but is not a string is treated as absent rather than
+ * coerced to `""` the way `stringField` does. That difference is deliberate:
+ * coercing would turn a malformed `bio: 42` into a deliberate *erase* of the
+ * user's bio. Omitting is the only safe reading of a value we cannot
+ * interpret — and if that leaves no fields at all, the backend's own "at least
+ * one field" rule rejects the request with a documented error.
+ */
+export function optionalStringField(
+  body: Record<string, unknown>,
+  name: string,
+): string | undefined {
+  const value = body[name];
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * Pull an array of strings out of the body, for the interests PUT.
+ *
+ * A missing field, or one that is not an array at all, becomes the empty array
+ * rather than an error raised here: the backend's own validator is the
+ * authority on how many ids are allowed, and it will say so in its own words.
+ * Reporting it locally would create a second, drifting copy of that rule.
+ *
+ * Elements are coerced the same way `stringField` coerces a whole field — a
+ * non-string becomes `""` — so the backend's UUID check produces its own
+ * documented message instead of a decoder error about a wrong type.
+ */
+export function stringArrayField(
+  body: Record<string, unknown>,
+  name: string,
+): string[] {
+  const value = body[name];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((entry) => (typeof entry === "string" ? entry : ""));
+}
+
 /** The API's error envelope, re-emitted so the client parses one shape. */
 export function errorResponse(error: ApiError): Response {
   return Response.json(

@@ -15,14 +15,23 @@ assertServer("src/lib/api/session.ts");
  * can make requests as the user, but it cannot read or exfiltrate a token that
  * outlives the page.
  *
- * The cookie names change between environments because of the `__Host-`
- * prefix, which browsers only accept on a Secure cookie with `Path=/` and no
- * `Domain`. Given those constraints it makes the cookie impossible for a
- * sibling subdomain to overwrite — a real defence, and free. It is applied in
- * production only, because a local dev server over plain http could not set it.
+ * The cookie NAMES live in `./cookie-names`, which imports nothing, because
+ * proxy.ts needs them and cannot import this module. They are re-exported
+ * here so the rule has one definition and one import site for everything that
+ * runs in the app.
  */
-export const ACCESS_COOKIE_BASE = "opueh_access";
-export const REFRESH_COOKIE_BASE = "opueh_refresh";
+// Imported for this module's own use as well as re-exported: a re-export alone
+// does not put a name in scope, and `isProduction` and `cookieNames` are both
+// called below.
+import { cookieNames, isProduction } from "./cookie-names";
+
+export {
+  ACCESS_COOKIE_BASE,
+  REFRESH_COOKIE_BASE,
+  cookieNames,
+  isProduction,
+  type CookieNames,
+} from "./cookie-names";
 
 /*
  * How long the refresh cookie should live.
@@ -40,24 +49,6 @@ export const REFRESH_COOKIE_BASE = "opueh_refresh";
  * remove the guess entirely.
  */
 export const REFRESH_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
-
-export function isProduction(): boolean {
-  return process.env.NODE_ENV === "production";
-}
-
-export type CookieNames = {
-  access: string;
-  refresh: string;
-};
-
-/** The cookie names for the current environment. */
-export function cookieNames(isProd: boolean = isProduction()): CookieNames {
-  const prefix = isProd ? "__Host-" : "";
-  return {
-    access: `${prefix}${ACCESS_COOKIE_BASE}`,
-    refresh: `${prefix}${REFRESH_COOKIE_BASE}`,
-  };
-}
 
 export type SessionTokens = {
   accessToken: string;

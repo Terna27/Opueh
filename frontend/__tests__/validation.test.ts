@@ -1,15 +1,21 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  BIO_MAX_LENGTH,
   DISPLAY_NAME_MAX_LENGTH,
   EMAIL_MAX_LENGTH,
   EMAIL_PATTERN,
+  MAX_INTERESTS,
+  MIN_INTERESTS,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   USERNAME_PATTERN,
+  validateBio,
   validateDisplayName,
   validateEmail,
+  validateInterestCount,
   validatePassword,
+  validateProfileDisplayName,
   validateUsername,
 } from "@/lib/validation";
 
@@ -217,5 +223,89 @@ describe("validateDisplayName", () => {
 
   test("accepts characters a username would reject", () => {
     expect(validateDisplayName("Jane Doe 🎬")).toBeUndefined();
+  });
+});
+
+describe("validateProfileDisplayName", () => {
+  test("requires a value, unlike the registration rule", () => {
+    // The divergence is the backend's: a PATCH of display_name is an
+    // instruction to SET it, and there is no username fallback on that path.
+    // Registration reads empty as "use the username"; an edit cannot.
+    expect(validateProfileDisplayName("")).toBe("Display name is required.");
+    expect(validateProfileDisplayName("   ")).toBe(
+      "Display name is required.",
+    );
+    expect(validateDisplayName("")).toBeUndefined();
+  });
+
+  test("applies the same length rule as registration", () => {
+    expect(
+      validateProfileDisplayName("a".repeat(DISPLAY_NAME_MAX_LENGTH)),
+    ).toBeUndefined();
+    expect(
+      validateProfileDisplayName("a".repeat(DISPLAY_NAME_MAX_LENGTH + 1)),
+    ).toBe("Display name must be 50 characters or fewer.");
+  });
+});
+
+describe("validateBio", () => {
+  test("is optional, and an empty value is meaningful rather than merely allowed", () => {
+    // Supplying an empty bio is how a user CLEARS it, so refusing one here
+    // would make clearing impossible.
+    expect(validateBio("")).toBeUndefined();
+  });
+
+  test("accepts a bio of exactly the maximum length", () => {
+    expect(validateBio("a".repeat(BIO_MAX_LENGTH))).toBeUndefined();
+  });
+
+  test("rejects a bio one character over the maximum", () => {
+    expect(validateBio("a".repeat(BIO_MAX_LENGTH + 1))).toBe(
+      "Bio must be 500 characters or fewer.",
+    );
+  });
+
+  test("measures the trimmed value, as the backend does", () => {
+    // `buildProfilePatch` trims before comparing, so measuring the untrimmed
+    // value here would reject input the API would have accepted.
+    const padded = `${" ".repeat(10)}${"a".repeat(BIO_MAX_LENGTH)}`;
+    expect(validateBio(padded)).toBeUndefined();
+  });
+
+  test("counts newlines, which a bio keeps", () => {
+    const lines = Array.from({ length: BIO_MAX_LENGTH }, () => "a").join("\n");
+    expect(validateBio(lines)).toBe(
+      `Bio must be ${BIO_MAX_LENGTH} characters or fewer.`,
+    );
+  });
+});
+
+describe("validateInterestCount", () => {
+  test("requires at least one, in the backend's own words", () => {
+    // Verbatim on purpose, unlike the rest of this module. The selection count
+    // is the rule a user is most likely to hit by accident, and hearing the
+    // API's exact sentence in the UI makes it obvious the two are one rule.
+    expect(validateInterestCount(0)).toBe(
+      "at least 1 category must be supplied",
+    );
+  });
+
+  test("allows the bounds", () => {
+    expect(validateInterestCount(MIN_INTERESTS)).toBeUndefined();
+    expect(validateInterestCount(MAX_INTERESTS)).toBeUndefined();
+  });
+
+  test("refuses one past the maximum", () => {
+    expect(validateInterestCount(MAX_INTERESTS + 1)).toBe(
+      "at most 10 categories may be selected",
+    );
+  });
+
+  test("allows a count no other rule could reach, so the bound is real", () => {
+    // MaxInterests is the size of the SELECTION, not of the catalogue. With
+    // ten categories seeded, "at most 10" is satisfiable — so this is a rule
+    // the UI must enforce rather than one it can never hit.
+    expect(MIN_INTERESTS).toBeLessThanOrEqual(MAX_INTERESTS);
+    expect(validateInterestCount(MAX_INTERESTS - 1)).toBeUndefined();
   });
 });

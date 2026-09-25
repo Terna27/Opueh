@@ -28,6 +28,10 @@ export type BackendErrorCode =
   | "RATE_LIMITED"
   | "REQUEST_TOO_LARGE"
   | "NOT_FOUND"
+  /** A specific user is missing: /me/profile, /me/interests, /users/{username}. */
+  | "USER_NOT_FOUND"
+  /** One or more category ids in a PUT /me/interests do not exist. */
+  | "CATEGORY_NOT_FOUND"
   | "METHOD_NOT_ALLOWED"
   | "INTERNAL";
 
@@ -80,6 +84,17 @@ export class ApiError extends Error {
     );
   }
 
+  /**
+   * No session cookie was present, so the API was never worth asking.
+   *
+   * Distinct from a 401 the API itself returned: this one is this app's own
+   * observation, and it is raised by every guarded proxy route so they all
+   * report a missing session with the same code, message and status.
+   */
+  static unauthenticated(): ApiError {
+    return new ApiError("UNAUTHENTICATED", "You are not signed in.", 401);
+  }
+
   /** A response arrived, but was not the documented error envelope. */
   static malformedResponse(status: number): ApiError {
     return new ApiError(
@@ -124,6 +139,8 @@ const BACKEND_ERROR_CODES: ReadonlySet<string> = new Set<BackendErrorCode>([
   "RATE_LIMITED",
   "REQUEST_TOO_LARGE",
   "NOT_FOUND",
+  "USER_NOT_FOUND",
+  "CATEGORY_NOT_FOUND",
   "METHOD_NOT_ALLOWED",
   "INTERNAL",
 ]);
@@ -226,4 +243,21 @@ export function isSessionOver(error: ApiError): boolean {
     error.code === "ACCOUNT_SUSPENDED" ||
     error.code === "ACCOUNT_BANNED"
   );
+}
+
+/**
+ * Whether a missing profile is the reason a request failed.
+ *
+ * The public profile endpoint answers with `USER_NOT_FOUND` — not the generic
+ * `NOT_FOUND` — and deliberately returns it for unknown, deleted, suspended
+ * and banned usernames alike, so the lookup says nothing about account state.
+ * The profile page turns this into the 404 page; every other failure has to
+ * stay an error, because "this user does not exist" and "Opueh is down" are
+ * not the same sentence to a reader.
+ *
+ * Both codes are accepted: `USER_NOT_FOUND` is what the API sends today, and
+ * `NOT_FOUND` is what a routing-layer miss would produce.
+ */
+export function isProfileMissing(error: ApiError): boolean {
+  return error.code === "USER_NOT_FOUND" || error.code === "NOT_FOUND";
 }
