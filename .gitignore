@@ -16,3 +16,9 @@ coverage.*
 .vscode/
 *.swp
 .DS_Store
+
+# A `git clone` run from inside the repo. Git records the nested checkout as a
+# gitlink (mode 160000) rather than as files, so `git add -A` commits a
+# submodule reference with no .gitmodules behind it — an entry with no URL that
+# nobody can fetch. Anchored to the root so it cannot mask a real source dir.
+/Opueh/
