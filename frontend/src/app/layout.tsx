@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 
 import { SiteFooter } from "@/components/layout/site-footer";
 import { SiteHeader } from "@/components/layout/site-header";
+import { Starfield } from "@/components/layout/starfield";
 import { SessionProvider } from "@/lib/auth/session-context";
 import { site } from "@/lib/site";
 
@@ -32,8 +33,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#09090b" },
+    { media: "(prefers-color-scheme: light)", color: "#fbf8f3" },
+    { media: "(prefers-color-scheme: dark)", color: "#12100e" },
   ],
 };
 
@@ -43,7 +44,20 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-background font-sans text-foreground">
+      {/*
+        `isolate` is load-bearing, not decoration.
+
+        The starfield is a negative z-index child, and without a stacking
+        context here it would belong to the ROOT context — where negative
+        z-index boxes paint BEFORE body's background. The opaque background
+        would then cover it and the stars would simply never appear, with no
+        error and nothing obviously wrong to look at.
+
+        Making body a stacking context repaints it in the order that is
+        wanted: body's background first, then this layer, then the content.
+      */}
+      <body className="isolate flex min-h-full flex-col bg-background font-sans text-foreground">
+        <Starfield />
         <a
           href="#main"
           className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:rounded-md focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground"

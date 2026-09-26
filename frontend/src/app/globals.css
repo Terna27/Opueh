@@ -12,41 +12,89 @@
  * Dark mode follows the operating system. An explicit theme switch would need
  * a class-based variant and a persisted preference; that is a design-system
  * decision (Milestone 2), not a foundation one.
+ *
+ * The palette is coffee, green, blue and warm white. Blue carries the
+ * interactive role — links, buttons, focus — because it is the only one of the
+ * four with enough contrast to hold both a filled button and body-sized link
+ * text on a dark background. Green marks selection and success. Coffee does the
+ * warm work: it is what the neutrals, the borders and the starfield are made
+ * of, which is why there is no `--brown` token — it is the whole neutral ramp
+ * rather than one accent.
  */
+
 :root {
-  --background: #ffffff;
-  --foreground: #18181b;
-  --surface: #fafafa;
-  --border: #e4e4e7;
-  --muted: #52525b;
-  --primary: #4f46e5;
+  /* Warm paper, not white: the coffee in the neutrals is what makes the blue
+     read as a choice rather than as a default. */
+  --background: #fbf8f3;
+  --foreground: #1c1917;
+  --surface: #ffffff;
+  --border: #e7e0d6;
+  --muted: #5f584f;
+
+  /* Darker than the dark theme's blue on purpose. The same blue that reads as
+     vivid on near-black is 2.9:1 on paper — invisible. Both values are chosen
+     against their own background, which is why the theme is declared twice
+     rather than derived once. */
+  --primary: #1e5a96;
   --primary-foreground: #ffffff;
-  --focus-ring: #4f46e5;
+  --focus-ring: #1e5a96;
+  --success: #2f6f4e;
 
   /* Destructive is split in two: text needs a darker red to stay legible on
      white, while a filled button needs a red that white text stays legible on. */
-  --destructive: #dc2626;
-  --destructive-solid: #dc2626;
+  --destructive: #b4432f;
+  --destructive-solid: #b4432f;
   --destructive-foreground: #ffffff;
+
+  /* The brand gradient: blue through green into coffee, i.e. the same three
+     accents the rest of the palette is built from, in the order the logo mark
+     lays them out. Used for the mark and for hero-level emphasis only — it is
+     a signature, and a signature repeated on every button stops being one.
+     Declared per theme because the light stops have to be darker to hold
+     contrast against paper. */
+  --brand-from: #1e5a96;
+  --brand-via: #2f6f4e;
+  --brand-to: #8a5a34;
+
+  /* Inverts between themes, which is not obvious and is why it is a token.
+     The light gradient's stops are all dark, so white text sits on them at
+     6.6–7.6:1. The dark gradient's stops are all mid-tones, where white text
+     falls to ~2.8:1 — under the 4.5:1 floor for 14px text — while near-black
+     text on the same stops reaches 5.2–6.4:1. So the readable colour flips. */
+  --brand-foreground: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #09090b;
-    --foreground: #fafafa;
-    --surface: #18181b;
-    --border: #27272a;
-    --muted: #a1a1aa;
-    --primary: #818cf8;
-    --primary-foreground: #09090b;
-    --focus-ring: #818cf8;
+    /* Deep coffee-black rather than neutral black. The starfield below is
+       tuned against this exact value. */
+    --background: #12100e;
+    --foreground: #f5f1ea;
+    --surface: #1c1917;
+    --border: #352e27;
+    --muted: #a8a29a;
+
+    /* Bright enough to be a link AND a button fill with dark text on it, so
+       one token serves both. */
+    --primary: #5b9bd5;
+    --primary-foreground: #0b1620;
+    --focus-ring: #7fb3e0;
+    --success: #6ba368;
 
     /* On a near-black background the error text has to lighten to stay
        readable, but the filled button keeps its darker red so white text on
        it still passes contrast. */
-    --destructive: #f87171;
-    --destructive-solid: #dc2626;
+    --destructive: #e06c5a;
+    --destructive-solid: #b4432f;
     --destructive-foreground: #ffffff;
+
+    --brand-from: #5b9bd5;
+    --brand-via: #6ba368;
+    --brand-to: #b07d4e;
+
+    /* See the note on the light value: on these mid-tones the readable colour
+       is near-black, not white. */
+    --brand-foreground: #0b1620;
   }
 }
 
@@ -58,12 +106,295 @@
   --color-muted: var(--muted);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-success: var(--success);
   --color-destructive: var(--destructive);
   --color-destructive-solid: var(--destructive-solid);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-brand-foreground: var(--brand-foreground);
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+}
+
+/*
+ * The brand gradient, as a fill and as text.
+ *
+ * Two classes rather than one because the text case needs the background-clip
+ * dance, and applying that to a filled element would make the element itself
+ * transparent. `.brand-text` also carries a solid `color` fallback: if
+ * `background-clip: text` is unsupported the glyphs would otherwise paint in
+ * whatever colour was inherited, which on a dark surface could be invisible.
+ */
+.brand-fill {
+  background-image: linear-gradient(
+    135deg,
+    var(--brand-from),
+    var(--brand-via) 55%,
+    var(--brand-to)
+  );
+}
+
+.brand-text {
+  background-image: linear-gradient(
+    135deg,
+    var(--brand-from),
+    var(--brand-via) 55%,
+    var(--brand-to)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: var(--foreground);
+}
+
+@supports (-webkit-background-clip: text) or (background-clip: text) {
+  .brand-text {
+    color: transparent;
+  }
+}
+
+/*
+ * The starfield.
+ *
+ * Three layers of one- to two-pixel dots, each with several tiled backgrounds
+ * at different periods so the repeats do not line up into a visible grid — a
+ * single tiled layer reads as wallpaper, and several layers whose periods
+ * differ read as a field.
+ *
+ * WHY THREE LAYERS RATHER THAN ONE
+ *
+ * The field follows the cursor. That only reads as depth if the layers move by
+ * different amounts: if everything shifted together the whole sky would look
+ * like it was sliding, which is a page transition, not a parallax. So the dots
+ * are split by apparent distance — the far layer barely moves, the near layer
+ * moves most — and each layer carries its own `--depth`.
+ *
+ * TWO SEPARATE TRANSFORMS, ON TWO SEPARATE ELEMENTS
+ *
+ * There are two motions here and they must not fight over one `transform`
+ * property: a slow ambient drift that runs on its own, and the cursor
+ * parallax. So the outer `.starfield__layer` carries the parallax (written by
+ * JS as `--px`/`--py`), and the inner `.starfield__drift` carries the ambient
+ * animation. Both are transforms, so the compositor handles both and neither
+ * triggers layout or paint.
+ *
+ * The drift is a CSS animation on purpose. The cursor loop stops as soon as it
+ * settles, which means a still cursor costs no main-thread work at all, while
+ * the drift keeps running on the compositor.
+ *
+ * OVERSCAN
+ *
+ * Both motions translate their element, and a translated full-viewport element
+ * pulls its edges inside the viewport and exposes bare background. The layers
+ * are therefore oversized (`inset` negative) by more than the largest
+ * translation either motion can produce.
+ *
+ * Dark mode only. On warm paper these dots read as dust on the screen — a star
+ * needs a sky — so light mode gets the warm background and nothing else, and
+ * the whole thing is `display: none`, which also means no layers to composite.
+ *
+ * The dots are tinted rather than white, and the tints carry a HIGHER opacity
+ * than the warm-white ones. That looks backwards and is not: a dot close to
+ * the foreground colour is the one that can sit behind a glyph and cost
+ * legibility, because the composite lands near the text it is competing with.
+ * Blue, green and coffee composite to something much darker, so they can be
+ * brighter and more saturated — which is also what makes the field read as
+ * colourful rather than as grey dust. The tints are capped at 0.52 and the
+ * near-white dots at 0.46.
+ */
+.starfield {
+  display: none;
+  overflow: hidden;
+}
+
+/*
+ * The parallax carrier. `--depth` is set per layer in the markup; `--px` and
+ * `--py` are written by the Starfield component, in pixels, already normalised
+ * to the range the depths expect.
+ *
+ * The fallbacks matter: before the first pointer move the custom properties do
+ * not exist, and `var(--px, 0px)` keeps the layer at rest instead of making
+ * the whole `transform` declaration invalid.
+ */
+.starfield__layer {
+  position: absolute;
+  inset: -14%;
+  will-change: transform;
+  transform: translate3d(
+    calc(var(--px, 0px) * var(--depth, 0)),
+    calc(var(--py, 0px) * var(--depth, 0)),
+    0
+  );
+}
+
+/*
+ * How far each layer travels, as a fraction of the cursor's offset from the
+ * centre. The ratios are what sell the depth — the near layer travelling four
+ * times as far as the far one is the whole effect. Kept here rather than in
+ * the component so the motion lives with the rest of the visual tuning.
+ */
+.starfield__layer--far {
+  --depth: 0.16;
+}
+
+.starfield__layer--mid {
+  --depth: 0.34;
+}
+
+.starfield__layer--near {
+  --depth: 0.62;
+}
+
+/*
+ * The ambient drift, and the dots themselves. `alternate` rather than a loop:
+ * the layers tile at different periods, so a translate that loops seamlessly
+ * for one would jump for another. Easing back and forth has no seam to hide.
+ */
+.starfield__drift {
+  position: absolute;
+  inset: -8%;
+  background-repeat: repeat;
+  animation: starfield-drift 120s ease-in-out infinite alternate;
+}
+
+@keyframes starfield-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-70px, -46px, 0);
+  }
+}
+
+/* Far: the faintest dust, smallest tiles, barely moves. */
+.starfield__drift--far {
+  background-image:
+    radial-gradient(
+      1px 1px at 30px 40px,
+      rgba(245, 241, 234, 0.24) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.1px 1.1px at 150px 92px,
+      rgba(245, 241, 234, 0.3) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1px 1px at 212px 198px,
+      rgba(91, 155, 213, 0.34) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.1px 1.1px at 70px 300px,
+      rgba(107, 163, 104, 0.3) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1px 1px at 258px 130px,
+      rgba(166, 123, 91, 0.3) 50%,
+      transparent 51%
+    );
+  background-size:
+    260px 260px,
+    260px 260px,
+    260px 260px,
+    260px 260px,
+    260px 260px;
+}
+
+/* Mid: the bulk of the field. */
+.starfield__drift--mid {
+  background-image:
+    radial-gradient(
+      1.3px 1.3px at 40px 180px,
+      rgba(245, 241, 234, 0.28) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.4px 1.4px at 380px 352px,
+      rgba(91, 155, 213, 0.44) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.4px 1.4px at 120px 478px,
+      rgba(107, 163, 104, 0.4) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.5px 1.5px at 598px 182px,
+      rgba(166, 123, 91, 0.46) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.4px 1.4px at 300px 250px,
+      rgba(91, 155, 213, 0.4) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.3px 1.3px at 432px 62px,
+      rgba(107, 163, 104, 0.38) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.4px 1.4px at 80px 618px,
+      rgba(166, 123, 91, 0.4) 50%,
+      transparent 51%
+    );
+  background-size:
+    560px 560px,
+    560px 560px,
+    560px 560px,
+    560px 560px,
+    560px 560px,
+    560px 560px,
+    560px 560px;
+}
+
+/* Near: the boldest dots, largest tiles, moves most. */
+.starfield__drift--near {
+  background-image:
+    radial-gradient(
+      1.6px 1.6px at 160px 758px,
+      rgba(245, 241, 234, 0.46) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.7px 1.7px at 720px 402px,
+      rgba(245, 241, 234, 0.4) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.8px 1.8px at 480px 80px,
+      rgba(245, 241, 234, 0.38) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.6px 1.6px at 340px 520px,
+      rgba(91, 155, 213, 0.5) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.7px 1.7px at 500px 660px,
+      rgba(107, 163, 104, 0.48) 50%,
+      transparent 51%
+    ),
+    radial-gradient(
+      1.6px 1.6px at 200px 320px,
+      rgba(166, 123, 91, 0.5) 50%,
+      transparent 51%
+    );
+  background-size:
+    900px 900px,
+    900px 900px,
+    900px 900px,
+    900px 900px,
+    900px 900px,
+    900px 900px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .starfield {
+    display: block;
+  }
 }
 
 @layer base {
@@ -88,6 +419,15 @@
   /*
    * Honour a reduced-motion preference: transitions are decorative here, so
    * they collapse rather than being removed outright.
+   *
+   * The starfield is called out separately below because it is the one thing
+   * here that moved for real rather than decoratively, and the blanket rule
+   * above is not enough for it: collapsing the drift to 0.01ms with a single
+   * iteration would leave every layer parked at the animation's END state —
+   * a permanent 70px offset, which is a static field in the wrong place
+   * rather than a static field. `animation: none` keeps the layers at rest,
+   * and the cursor parallax is skipped in JS rather than in CSS, because a
+   * transform written by script is not something a stylesheet can override.
    */
   @media (prefers-reduced-motion: reduce) {
     *,
@@ -97,6 +437,14 @@
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
+    }
+
+    .starfield__drift {
+      animation: none !important;
+    }
+
+    .starfield__layer {
+      transform: none !important;
     }
   }
 }

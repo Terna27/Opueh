@@ -10,6 +10,10 @@ import { cn } from "@/lib/cn";
  * and `footer` props. Cards in this app differ enough — a post card's header
  * is an avatar and a timestamp, a form card's is a heading — that props would
  * either be unused or would have to model every case.
+ *
+ * `rounded-2xl` and the 1px border are the app's surface language: a soft,
+ * generous radius on a barely-lighter panel, which is how a media-first feed
+ * separates items without drawing hard boxes around them.
  */
 export function Card({
   className,
@@ -19,7 +23,7 @@ export function Card({
     <div
       {...props}
       className={cn(
-        "rounded-lg border border-border bg-surface text-foreground",
+        "rounded-2xl border border-border bg-surface text-foreground",
         className,
       )}
     />

@@ -33,12 +33,12 @@ export function Hero() {
     >
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 -top-32 h-80 bg-primary/5 blur-3xl"
+        className="brand-fill pointer-events-none absolute inset-x-0 -top-24 h-72 opacity-[0.07] blur-3xl"
       />
 
       <Container className="relative grid gap-12 py-16 sm:py-20 lg:grid-cols-2 lg:items-center lg:gap-16 lg:py-28">
         <div className="flex flex-col items-start">
-          <p className="text-sm font-medium tracking-wide text-primary uppercase">
+          <p className="brand-text text-sm font-semibold tracking-wide uppercase">
             {hero.eyebrow}
           </p>
 
@@ -75,10 +75,12 @@ export function Hero() {
 
         {/*
           Below `lg` the hero is one column, so the preview would otherwise
-          stretch the full width of the page — and because it holds a 16:9
-          video box, stretching it makes it taller rather than wider, leaving a
-          huge grey rectangle dominating the tablet view. Capping the width
-          keeps it a preview rather than the whole screen.
+          stretch the full width of the page — and stretching it is worse here
+          than it sounds, because the preview's centrepiece derives its width
+          from a fixed height (a 9:16 frame). Given more width it does not get
+          wider, it gets taller, and a preview that tall pushes the copy off
+          the first screen. Capping the width keeps it a preview rather than
+          the whole page.
         */}
         <div className="mx-auto w-full max-w-lg min-w-0 lg:mx-0 lg:max-w-none">
           <PlatformPreview />

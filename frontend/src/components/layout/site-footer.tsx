@@ -27,7 +27,7 @@ export function SiteFooter() {
           <p className="flex items-center gap-2 text-base font-semibold tracking-tight text-foreground">
             <span
               aria-hidden="true"
-              className="flex size-7 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground"
+              className="brand-fill flex size-8 items-center justify-center rounded-xl text-sm font-bold text-brand-foreground"
             >
               O
             </span>

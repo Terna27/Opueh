@@ -153,7 +153,7 @@ describe("Button", () => {
       expect(className).toContain("inline-flex");
       // The disabled styling is inert on a link, but harmless — and keeping it
       // means one definition of what a button looks like.
-      expect(className).toContain("rounded-md");
+      expect(className).toContain("rounded-full");
     });
 
     test("includes shared chrome regardless of variant and size", () => {

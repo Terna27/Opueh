@@ -63,7 +63,7 @@ describe("Card", () => {
 
     const card = container.firstElementChild;
     expect(card?.className).toContain("mt-4");
-    expect(card?.className).toContain("rounded-lg");
+    expect(card?.className).toContain("rounded-2xl");
   });
 
   test("passes through native attributes", () => {

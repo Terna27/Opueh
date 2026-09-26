@@ -33,7 +33,10 @@ export function buttonVariants({
   size?: ButtonSize;
 } = {}): string {
   return cn(
-    "inline-flex shrink-0 items-center justify-center rounded-md font-medium transition-colors",
+    // Fully round rather than a rounded rectangle. A pill is the shape a
+    // social product's actions take, and it is also the most legible target
+    // shape at small sizes — the curve tells the eye where the edge is.
+    "inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors",
     "disabled:pointer-events-none disabled:opacity-50",
     variantClasses[variant],
     sizeClasses[size],

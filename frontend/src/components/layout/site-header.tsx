@@ -28,7 +28,7 @@ export function SiteHeader() {
         >
           <span
             aria-hidden="true"
-            className="flex size-7 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground"
+            className="brand-fill flex size-8 items-center justify-center rounded-xl text-sm font-bold text-brand-foreground"
           >
             O
           </span>
