@@ -72,3 +72,7 @@ make migrate-new name=add_users   # create migrations/NNNNNN_add_users.{up,down}
 make migrate-up                   # apply pending
 make migrate-down                 # roll back the latest
 ```
+
+## React web client
+
+The first frontend milestone is in `web/`. See [web/README.md](web/README.md) for setup, account integration, security choices and production routing. Set backend APP_URL to http://localhost:5173 for local recovery links.

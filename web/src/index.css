@@ -1,0 +1,82 @@
+:root {
+  font-family: Inter, Arial, sans-serif;
+  color: #1c2925;
+  background: #f7f8f6;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button,
+input,
+textarea {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #8ac6ac;
+  outline-offset: 3px;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+input,
+textarea {
+  width: 100%;
+  border: 1px solid #d7dfda;
+  background: white;
+  border-radius: 9px;
+  padding: 13px 14px;
+  color: #1c2925;
+}
+input:read-only {
+  background: #f5f7f5;
+}
+textarea {
+  resize: vertical;
+}
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 18px;
+}
+label input,
+label textarea {
+  display: block;
+  margin-top: 8px;
+}
+label small {
+  display: block;
+  font-weight: 400;
+  color: #707c75;
+  font-size: 11px;
+  margin-top: 7px;
+}
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
