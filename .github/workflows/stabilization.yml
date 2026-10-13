@@ -1,0 +1,72 @@
+name: Opueh stabilization checks
+
+on:
+  push:
+    branches:
+      - audit/opueh-stabilization
+      - feat/onboarding-account-and-theme
+  pull_request:
+    branches:
+      - main
+      - audit/opueh-stabilization
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Go formatting check
+        run: |
+          unformatted="$(gofmt -l $(git ls-files '*.go'))"
+          if [ -n "$unformatted" ]; then
+            printf 'Unformatted Go files:\n%s\n' "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build ./cmd/api
+
+  nextjs:
+    name: Next.js lint, typecheck, tests, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect Next.js source
+        id: source
+        working-directory: .
+        run: |
+          if [ -f frontend/package-lock.json ]; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'present=false' >> "$GITHUB_OUTPUT"
+            echo 'Next.js frontend is not yet on this branch.'
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.source.outputs.present == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        if: steps.source.outputs.present == 'true'
+      - run: npm run lint
+        if: steps.source.outputs.present == 'true'
+      - run: npm run typecheck
+        if: steps.source.outputs.present == 'true'
+      - run: npm test
+        if: steps.source.outputs.present == 'true'
+      - run: npm run build
+        if: steps.source.outputs.present == 'true'
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
