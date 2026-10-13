@@ -27,10 +27,8 @@ assertServer("src/lib/api/proxy.ts");
  * and the alternative — treating absence as trust — is exactly the assumption
  * an attacker would want us to make.
  *
- * Residual gap, accepted and worth stating: an Origin comparison is
- * site-scoped, not origin-scoped. A compromised sibling subdomain shares the
- * site and would pass. Closing that needs a double-submit token, which is the
- * documented escalation path if the threat model changes.
+ * Compare the full origin (scheme, host and port), not only the host. A
+ * sibling subdomain or a mismatched scheme must not pass this check.
  */
 export function checkSameOrigin(request: Request): ApiError | null {
   const origin = request.headers.get("origin");
@@ -38,16 +36,16 @@ export function checkSameOrigin(request: Request): ApiError | null {
     return ApiError.forbiddenOrigin();
   }
 
-  let originHost: string;
+  let requestOrigin: string;
   try {
     // Throws for the literal "null" that sandboxed iframes and some privacy
     // modes send, which is a rejection rather than a parse failure to report.
-    originHost = new URL(origin).host;
+    requestOrigin = new URL(origin).origin;
   } catch {
     return ApiError.forbiddenOrigin();
   }
 
-  if (originHost !== new URL(request.url).host) {
+  if (requestOrigin !== new URL(request.url).origin) {
     return ApiError.forbiddenOrigin();
   }
 
