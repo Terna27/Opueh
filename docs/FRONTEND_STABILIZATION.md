@@ -36,3 +36,11 @@ At the start of this audit, the remote main branch contains a React/Vite fronten
 
 ## Working rules
 Build → test → fix → retest → verify in the application → explain → stop for approval. No unverified completion claims. No direct pushes to main. No deletion of the legacy frontend until parity and team review are complete.
+
+## S1 discovery update — 2026-10-13
+- **Recovered source:** `feat/onboarding-account-and-theme` contains `frontend/` with Next.js 16.3.5, React 19, Tailwind v4, Vitest suites, browser verification script, proxy API routes, onboarding, profile editing and public profile pages. This is the preferred recovery source; do not scaffold over it.
+- **Branch divergence:** comparison against `audit/opueh-stabilization` reports diverged history (7 commits ahead, 2 behind); draft PR #2 is **not mergeable** as currently reported. Do not merge blindly. Reconcile changes while preserving the `web/` frontend on the audit branch.
+- **Security code review:** `frontend/src/lib/api/session.ts` writes HttpOnly SameSite=Lax cookies with Secure in production. `frontend/src/lib/api/refresh.ts` implements per-instance single-flight coordination and retains successful results briefly. `frontend/src/lib/api/proxy.ts` checks mutating request Origin. These are implementation findings, **not proof of runtime security**.
+- **Important unresolved issues:** multi-instance refresh coordination is explicitly not solved; the refresh-cookie TTL mirrors backend defaults; source documentation `frontend/README.md` has outdated milestone text and must be updated after reconciliation. A real Go/PostgreSQL integration test has not been run in this review.
+- **Recovery procedure:** merge or cherry-pick the feature branch into the audit branch only after reviewing the conflicts and preserving both `frontend/` and `web/`. Do not force-update refs or delete the existing frontend. Run `npm ci && npm run lint && npm run typecheck && npm test && npm run build` from `frontend/`; run Go tests and browser integration separately. Record actual results.
+- **Review link:** https://github.com/Terna27/Opueh/pull/2 (draft; do not merge while non-mergeable).
