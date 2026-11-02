@@ -9,6 +9,10 @@ export const metadata: Metadata = {
   description: "Log in to your Opueh account.",
 };
 
+type LoginPageProps = {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+};
+
 /*
  * `searchParams` is read on the server and handed to the form as a prop, rather
  * than the form calling `useSearchParams` itself. The hook would force a client
@@ -20,7 +24,7 @@ export const metadata: Metadata = {
  * see that function for why the check is an allowlist rather than a
  * `startsWith("/")`.
  */
-export default async function LoginPage({ searchParams }: PageProps<"/login">) {
+export default async function LoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
   const next = safeNext(typeof params.next === "string" ? params.next : undefined);
 
