@@ -19,7 +19,9 @@ import { fetchPublicProfile } from "@/lib/api/profile";
  * `params` is a Promise in this version of Next and must be awaited.
  */
 
-type PublicProfilePageProps = PageProps<"/u/[username]">;
+type PublicProfilePageProps = {
+  params: Promise<{ username: string }>;
+};
 
 export async function generateMetadata({
   params,
